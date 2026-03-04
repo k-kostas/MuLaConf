@@ -42,7 +42,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 # 1. Define the path to your data
-data_path = "/data/yeast"
+data_path = "data/yeast"
 
 # 2. Load the Yeast dataset (Features and Labels)
 X = pd.read_csv(f"{data_path}/X_yeast.csv")
