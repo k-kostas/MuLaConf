@@ -33,10 +33,10 @@ class InductiveConformalPredictor:
     ----------
     predicted_probabilities : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
         The predicted probabilities for the proper training set.
-        Shape: (n_samples, n_classes).
+        Shape: (n_samples, c_classes).
     true_labels : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
         The ground truth binary labels for the proper training set.
-        Shape: (n_samples, n_classes).
+        Shape: (n_samples, c_classes).
     weight_hamming : float, optional, default=0.0
         The weight for the Hamming distance penalty. Higher values penalize predictions
         that are structurally different from observed training labels.
@@ -224,9 +224,9 @@ class InductiveConformalPredictor:
         ----------
         labels : torch.Tensor
             The set of ground truth labels of the proper training set.
-            Shape: (n_samples, n_classes).
+            Shape: (n_samples, c_classes).
 
-        Examples
+        Example
         --------
         >>> # 1. Generate dummy data (100 samples, 5 classes)
         >>> labels = torch.randint(0, 2, (100, 5)).float()
@@ -264,10 +264,10 @@ class InductiveConformalPredictor:
         ----------
         labels : torch.Tensor
             The set of ground truth labels used to calculate size frequencies.
-            Shape: (n_samples, n_classes).
+            Shape: (n_samples, c_classes).
 
 
-        Examples
+        Example
         --------
         >>> # Generate dummy data (100 samples, 5 classes)
         >>> labels = torch.randint(0, 2, (100, 5)).float()
@@ -299,11 +299,12 @@ class InductiveConformalPredictor:
         ----------
         probabilities : torch.Tensor
             Predicted probabilities for the proper training set.
+            Shape: (n_samples, c_classes).
         labels : torch.Tensor
             True labels for the proper training set.
+             Shape: (n_samples, c_classes).
 
-
-        Examples
+        Example
         --------
         >>> # Generate dummy data (100 samples, 5 classes)
         >>> probabilities = torch.rand(100, 5)
@@ -370,10 +371,10 @@ class InductiveConformalPredictor:
         ----------
         probabilities : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
             Predicted probabilities for the calibration set.
-            Shape: (n_samples, n_classes).
+            Shape: (q_samples, c_classes).
         labels : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
             Ground truth labels for the calibration set.
-            Shape: (n_samples, n_classes).
+            Shape: (q_samples, c_classes).
 
 
         Returns
@@ -392,7 +393,7 @@ class InductiveConformalPredictor:
             If `probabilities` shape does not match the number of classes.
 
 
-        Examples
+        Example
         --------
         >>> # 1. Generate dummy calibration data (25 samples, 5 classes)
         >>> calib_probs = torch.rand(25, 5)
@@ -402,7 +403,7 @@ class InductiveConformalPredictor:
         >>> icp.calibrate(calib_probs, calib_labels)
 
 
-        Examples
+        Example
         --------
         >>> # Optional: The `calibrate` method recalculates calibration scores after weight update.
         >>> icp.weight_hamming = 1.0
@@ -447,15 +448,15 @@ class InductiveConformalPredictor:
         ----------
         probabilities : torch.Tensor
             Predicted probabilities for the input sample.
-            Shape: (n_samples, n_classes).
+            Shape: (t_samples, c_classes).
 
 
         Returns
         -------
         torch.Tensor
             A 1D tensor containing the calculated nonconformity scores for every
-            possible label combination (2^n_classes) for the given test sample.
-            Shape: (2^n_classes,)
+            possible label combination for the given test sample.
+            Shape: (2^(c_classes))
         """
 
         # probabilities = _is_tensor(probabilities).to(self.device)
@@ -485,7 +486,7 @@ class InductiveConformalPredictor:
         ----------
         probabilities : torch.Tensor
             Predicted probabilities for the test set.
-            Shape: (n_samples, n_classes).
+            Shape: (t_samples, c_classes).
 
         Returns
         -------
@@ -502,7 +503,7 @@ class InductiveConformalPredictor:
             If `probabilities` shape does not match the number of classes.
 
 
-        Examples
+        Example
         --------
         >>> # Generate dummy test probabilities
         >>> test_probs = torch.rand(10, 5)

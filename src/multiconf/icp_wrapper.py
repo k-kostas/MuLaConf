@@ -25,9 +25,9 @@ class ICPWrapper:
 
     .. note::
         **Advanced Usage - Switching Strategies:**
-        You can switch the classification strategy or update its parameters dynamically.
+        You can switch the classification strategy or update its parameters.
         If the wrapper detects a change (via fingerprinting) during `calibrate`, it will
-        automatically retrain the new model on the cached training data.
+        automatically retrain the new model on the cached proper-training data.
 
 
     Parameters
@@ -67,20 +67,20 @@ class ICPWrapper:
 
         This method handles different output formats from Scikit-Learn classifiers (e.g., standard arrays
         vs. list of arrays from `MultiOutputClassifier`) and ensures the output is a single
-        tensor of shape `(n_samples, n_classes)`.
+        tensor of shape `(n_samples, c_classes)`.
 
 
         Parameters
         ----------
         features : array-like
-            The input features for prediction. Shape: (n_samples, n_features).
+            The input features for prediction. Shape: (n_samples, w_features).
 
 
         Returns
         -------
         torch.Tensor
             A tensor containing the predicted probabilities for the positive class (1).
-            Shape: (n_samples, n_classes).
+            Shape: (n_samples, c_classes).
 
 
         Example
@@ -140,9 +140,9 @@ class ICPWrapper:
         Parameters
         ----------
         train_features : array-like
-            The training features. Shape: (n_samples, n_features).
+            The training features. Shape: (n_samples, w_features).
         train_labels : array-like
-            The training labels (binary multi-hot). Shape: (n_samples, n_classes).
+            The training labels (binary multi-hot). Shape: (n_samples, c_classes).
         **kwargs : dict
             Optional arguments to pass to the classifier's `set_params` or `fit` method.
 
@@ -231,9 +231,9 @@ class ICPWrapper:
         Parameters
         ----------
         calib_features : array-like
-            Features of the calibration set.
+            Features of the calibration set. Shape: (q_samples, w_features).
         calib_labels : array-like
-            Labels of the calibration set.
+            Labels of the calibration set. Shape: (q_samples, c_classes).
 
 
         Returns
@@ -328,7 +328,7 @@ class ICPWrapper:
         Parameters
         ----------
         test_features : array-like
-            The test features. Shape: (n_samples, n_features).
+            The test features. Shape: (t_samples, w_features).
 
         Returns
         -------

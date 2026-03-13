@@ -28,20 +28,20 @@ class PredictionRegions:
     ----------
     p_values : torch.Tensor
         The p-values associated with every possible label combination for each test sample.
-        Shape: (n_samples, n_classes).
+        Shape: (t_samples, 2^(c_classes)).
     combinations : torch.Tensor
         The matrix of all possible label combinations corresponding to the columns of `p_values`.
-        Shape: (2^n_classes, n_classes).
+        Shape: (2^(c_classes), c_classes).
 
 
-    Examples
+    Example
     --------
     >>> import torch
     >>> from multiconf.prediction_regions import PredictionRegions
     >>>
     >>> # 1. Generate dummy data (100 samples, 5 classes -> 32 combinations)
     >>> combinations = torch.cartesian_prod(*[torch.tensor([0, 1])] * 5)
-    >>> p_values = torch.rand(100, 5)
+    >>> p_values = torch.rand(100, 2**5)
     >>>
     >>> # 2. Initialize container
     >>> prediction_regions_obj = PredictionRegions(p_values, combinations)
@@ -98,14 +98,14 @@ class PredictionRegions:
         ----------
         true_label : torch.Tensor
             The ground truth labels for the test samples.
-            Shape: (n_samples, n_classes).
+            Shape: (t_samples, c_classes).
 
 
         Returns
         -------
         torch.Tensor
             A 1D tensor of p-values corresponding to the true labels.
-            Shape: (n_samples,).
+            Shape: (t_samples).
         """
 
         matches = (true_label.unsqueeze(1) == self.combinations.unsqueeze(0)).all(dim=-1)
@@ -124,7 +124,7 @@ class PredictionRegions:
         ----------
         true_labels : torch.Tensor
             The ground truth labels.
-
+            Shape: (t_samples, c_classes).
 
         Returns
         -------
@@ -179,7 +179,7 @@ class PredictionRegions:
             If ``significance_level`` is None or out of range [0, 1].
 
 
-        Examples
+        Example
         --------
         >>> # Scalar alpha
         >>> prediction_sets_lst = prediction_regions_obj(0.1)
@@ -280,7 +280,7 @@ class PredictionRegions:
             If ``true_labelsets`` shape does not match the number of classes.
 
 
-        Examples
+        Example
         --------
         >>> # Generate dummy test labels
         >>> y_test = torch.rand(10, 5)
