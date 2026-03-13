@@ -14,11 +14,10 @@ class InductiveConformalPredictor:
     """
     Inductive Conformal Predictor with Structural Penalties.
 
-    This class implements Inductive Conformal Prediction (ICP) for multi-label classification,
-    extended with structural penalties (Hamming and Cardinality). It uses the Mahalanobis
-    distance in the error vectors space to account for label correlations. Also, it allows
-    for dynamic re-weighting of penalties without retraining the underlying model or
-    recalculating the covariance matrix.
+    This class implements Inductive Conformal Prediction (ICP) for multi-label classification, extended with
+    structural penalties (Hamming and Cardinality). It uses the Mahalanobis distance in the error vector space
+    to account for label correlations. Additionally, it allows for on-the-fly updating of the penalty weights
+    without retraining the underlying model or recalculating the covariance matrix.
 
     .. note::
        The predictor calculates the Covariance Matrix based on the training set's error vectors,
