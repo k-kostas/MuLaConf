@@ -383,4 +383,3 @@ If you use the package for a scientific publication, you are kindly requested to
 8. <a id="vovk2005"></a>Vovk, V., Gammerman, A., & Shafer, G. (2005). *Algorithmic Learning in a Random World* (Vol. 29). Springer.
 
 9. <a id="vovk2016"></a>Vovk, V., Fedorova, V., Nouretdinov, I., & Gammerman, A. (2016). Criteria of efficiency for conformal prediction. In *Conformal and Probabilistic Prediction with Applications: 5th International Symposium, COPA 2016, Madrid, Spain, April 20-22, 2016, Proceedings 5* (pp. 23–39). Springer.
-
