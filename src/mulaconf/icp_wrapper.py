@@ -389,3 +389,4 @@ class ICPWrapper:
         print("---The object of PredictionRegions class is returned.---\n")
 
         return self.icp.predict(test_probabilities.to(self.device))
+

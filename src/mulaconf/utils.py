@@ -125,5 +125,3 @@ def _fingerprint_model(model, params) -> str:
         return "unknown"
 
     return h.hexdigest()
-
-

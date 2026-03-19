@@ -19,3 +19,4 @@ Prediction Regions
 .. autoclass:: multiconf.prediction_regions.PredictionRegions
    :special-members: __call__
    :members: evaluate
+
