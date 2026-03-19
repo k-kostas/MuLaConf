@@ -43,7 +43,7 @@ pip install mulaconf
 
 
 ## Documentation
-For the complete documentation see [multi-conf.readthedocs.io](https://multi-conf.readthedocs.io/en/latest/)
+For the complete documentation see [multi-conf.readthedocs.io](https://mulaconf.readthedocs.io/en/latest/index.html)
 
 
 ## Quickstart
@@ -337,7 +337,7 @@ print(metrics)
 
 ## Examples
 
-For additional examples of how to use the package, see the [documentation](https://multi-conf.readthedocs.io/en/latest/documentation.html).
+For additional examples of how to use the package, see the [documentation](https://mulaconf.readthedocs.io/en/latest/documentation.html).
 
 
 ## Citing MuLaConf
