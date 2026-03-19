@@ -16,5 +16,5 @@ __all__ = [
     "ICPWrapper",
     "InductiveConformalPredictor",
     "PredictionRegions",
-    __version__,
+    "__version__",
 ]
