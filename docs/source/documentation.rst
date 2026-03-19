@@ -1,4 +1,4 @@
-The MultiConf Package
+The MuLaConf Package
 ====================================
 
 Package Wrapper

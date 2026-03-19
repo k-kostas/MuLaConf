@@ -1,4 +1,4 @@
-MultiConf Package
+MuLaConf Package
 ================================
 
 A flexible Python package for **Conformal Prediction (CP)** in **Multi-Label** classification tasks.

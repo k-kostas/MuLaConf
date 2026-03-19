@@ -1,7 +1,7 @@
 import os
 import sys
 
-project = 'MultiConf'
+project = 'MuLaConf'
 copyright = '2026, Kostas Katsios'
 author = 'Kostas Katsios'
 release = '0.1.0'
@@ -20,7 +20,7 @@ exclude_patterns = []
 html_theme = "pydata_sphinx_theme"
 
 html_theme_options = {
-    "github_url": "https://github.com/k-kostas/MultiConf",
+    "github_url": "https://github.com/k-kostas/MuLaConf",
 }
 
 sys.path.insert(0, os.path.abspath('../../src'))
@@ -30,7 +30,7 @@ autodoc_member_order = 'bysource'
 copybutton_prompt_text = r">>> ?|\.\.\. ?"
 copybutton_prompt_is_regexp = True
 
-html_title = 'MultiConf v. 0.1.0'
+html_title = 'MuLaConf v. 0.1.0'
 
 html_sidebars = {
     "**": []

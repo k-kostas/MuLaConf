@@ -37,7 +37,7 @@ class PredictionRegions:
     Example
     --------
     >>> import torch
-    >>> from multiconf.prediction_regions import PredictionRegions
+    >>> from mulaconf.prediction_regions import PredictionRegions
     >>>
     >>> # 1. Generate dummy data (100 samples, 5 classes -> 32 combinations)
     >>> combinations = torch.cartesian_prod(*[torch.tensor([0, 1])] * 5)

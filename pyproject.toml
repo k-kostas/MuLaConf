@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "multiconf"
+name = "mulaconf"
 version = "0.1.0"
 authors = [
   { name="Kostas Katsios", email="kos.katsios@gmail.com" },
@@ -26,5 +26,5 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/k-kostas/MultiConf"
-"Bug Tracker" = "https://github.com/k-kostas/MultiConf/issues"
+"Homepage" = "https://github.com/k-kostas/MuLaConf"
+"Bug Tracker" = "https://github.com/k-kostas/MuLaConf/issues"

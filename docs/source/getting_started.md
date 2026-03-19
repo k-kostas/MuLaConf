@@ -3,11 +3,11 @@
 ## Installation
 
 ```bash
-pip install multiconf
+pip install mulaconf
 ```
 
 ## Tutorial
-The MultiConf is a Python package implementing the novel Conformal Prediction framework introduced
+The MuLaConf is a Python package implementing the novel Conformal Prediction framework introduced
 in "Incorporating Structural Penalties in Multi-label Conformal Prediction" (Katsios & Papadopoulos, 2025).
 Based on the 2025 research by Katsios & Papadopoulos, this package addresses the structural limitation by integrating
 Structural Penalties into the nonconformity measure. By penalizing predictions based on their label dependencies
@@ -62,7 +62,7 @@ Data shapes: Train=(1522, 103), Calib=(653, 103), Test=(242, 103)
 ```
 
 ### Setting up the Wrapper - Scikit-Learn API
-The ICPWrapper is a Scikit-Learn compatible interface that integrates MultiConf with standard
+The ICPWrapper is a Scikit-Learn compatible interface that integrates MuLaConf with standard
 Scikit-Learn classifiers. It bridges Scikit-Learn (for the underlying classifier) and PyTorch
 (for efficient tensor computations and GPU acceleration).
 
@@ -92,13 +92,13 @@ When using meta-estimators (e.g., [`MultiOutputClassifier`](https://scikit-learn
 you can configure the inner model's parameters in two ways:
 
 1. Direct Initialization
-    Initialize the inner classifier with its parameters before passing it to the wrapper.
-    
+   Initialize the inner classifier with its parameters before passing it to the wrapper.
+
     ```python
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.multioutput import MultiOutputClassifier
 
-    from multiconf.icp_wrapper import ICPWrapper
+    from mulaconf.icp_wrapper import ICPWrapper
     
     base_model = MultiOutputClassifier(RandomForestClassifier(n_estimators=10))
     wrapper = ICPWrapper(base_model, weight_hamming=2.0, weight_cardinality=1.5, device='cpu')
@@ -106,13 +106,13 @@ you can configure the inner model's parameters in two ways:
     ```
 
 2. You can pass parameters dynamically to the fit method using a dictionary. For meta-estimators, you must use the
-    `estimator__` prefix (double underscore) to reach the inner model.  
-  
+    `estimator__` prefix (double underscore) to reach the inner model.
+
     ```python
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.multioutput import MultiOutputClassifier
     
-    from multiconf.icp_wrapper import ICPWrapper
+    from mulaconf.icp_wrapper import ICPWrapper
     
     base_model = MultiOutputClassifier(RandomForestClassifier())
     wrapper = ICPWrapper(base_model, weight_hamming=2.0, weight_cardinality=1.5, device='cpu')
@@ -265,12 +265,12 @@ First, we need to initialize the InductiveConformalPredictor class to calculate 
 the covariance matrix using the proper training data.
 
 ```python
-from multiconf.icp_predictor import InductiveConformalPredictor
+from mulaconf.icp_predictor import InductiveConformalPredictor
 
 icp = InductiveConformalPredictor(
     predicted_probabilities=train_probs,
     true_labels=train_labels,
-    weight_hamming=1.5,  
+    weight_hamming=1.5,
     weight_cardinality=0.5,
     device='cpu'
 )
