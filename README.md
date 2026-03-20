@@ -36,11 +36,17 @@ Table of Contents
 
 
 ## Installation
+MuLaConf is available on both PyPI and Conda-forge.
 
+From PyPI:
 ```bash
 pip install mulaconf
 ```
 
+From Conda-forge:
+```bash
+conda install -c conda-forge mulaconf
+```
 
 ## Documentation
 For the complete documentation see [mulaconf.readthedocs.io](https://mulaconf.readthedocs.io/en/latest/)

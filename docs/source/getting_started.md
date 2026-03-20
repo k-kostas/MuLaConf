@@ -2,10 +2,18 @@
 
 
 ## Installation
+MuLaConf is available on both PyPI and Conda-forge.
 
+From PyPI:
 ```bash
 pip install mulaconf
 ```
+
+From Conda-forge:
+```bash
+conda install -c conda-forge mulaconf
+```
+
 
 ## Tutorial
 The MuLaConf is a Python package implementing the novel Conformal Prediction framework introduced
