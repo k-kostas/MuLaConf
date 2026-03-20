@@ -9,23 +9,19 @@ pip install mulaconf
 
 ## Tutorial
 The MuLaConf is a Python package implementing the novel Conformal Prediction framework introduced
-in "Incorporating Structural Penalties in Multi-label Conformal Prediction" (Katsios & Papadopoulos, 2025).
-Based on the 2025 research by Katsios & Papadopoulos, this package addresses the structural limitation by integrating
+in "Incorporating Structural Penalties in Multi-label Conformal Prediction"
+[[Katsios & Papadopoulos, 2025](https://proceedings.mlr.press/v266/katsios25a.html)].
+Based on the 2025 research by Katsios and Papadopoulos, this package addresses the structural limitation by integrating
 Structural Penalties into the nonconformity measure. By penalizing predictions based on their label dependencies
 from the training data's structure, the algorithm produces valid prediction sets.
 
-The package implements the two key penalties, associated with the Mahalanobis nonconformity measure, proposed
-in the paper:
+The package implements the two key penalties, associated with the Mahalanobis nonconformity measure:
 
 * Hamming Penalty: Penalizes label combinations that are based in the minimum Hamming distance from the true
 label-sets found in the proper training data.
 
 * Cardinality Penalty: Penalizes label combinations whose size (number of active labels) deviates significantly
 from the expected cardinality of the training sets.
-
-    > <a id="katsios2025"></a>Katsios, K., & Papadopoulos, H. (2025). Incorporating Structural Penalties in Multi-label Conformal Prediction.
-    > *Proceedings of Machine Learning Research*, 266, 1-20.
-    [[Download PDF](https://raw.githubusercontent.com/mlresearch/v266/main/assets/katsios25a/katsios25a.pdf)]
 
 
 ### Load and split data
@@ -106,7 +102,7 @@ you can configure the inner model's parameters in two ways:
     wrapper.fit(X_train, y_train)
     ```
 
-2. You can pass parameters dynamically to the fit method using a dictionary. For meta-estimators, you must use the
+2. You can pass parameters to the fit method using a dictionary. For meta-estimators, you must use the
     `estimator__` prefix (double underscore) to reach the inner model.
 
     ```python
@@ -139,7 +135,7 @@ wrapper.calibrate(X_calib, y_calib)
 
 ~~~{Note}
 **Switching Underlying Scikit-Learn Strategies** :
- You can switch the classification strategy or update its parameters dynamically. If the wrapper detects a change (via fingerprinting) during calibration, it will automatically retrain the new model on the cached proper training data.
+ You can switch the classification strategy or update its parameters. If the wrapper detects a change (via fingerprinting) during calibration, it will automatically retrain the new model on the cached proper training data.
 
 ```python
 from sklearn.neighbors import KNeighborsClassifier
@@ -192,7 +188,7 @@ prediction_sets = wrapper.predict(X_test)(significance_level=0.1)
 ```
 
 ~~~{Note}
-**Dynamic Penalties Weights Update**: We update the penalty weights dynamically without retraining the model.
+**Penalty Weights Update**: We update the penalty weights on-the-fly without retraining the model.
 
 ```python
 wrapper.icp.weight_hamming = 1.5
@@ -321,7 +317,7 @@ prediction_sets = icp.predict(test_probs)(significance_level=0.1)
 ```
 
 ~~~{Note}
-**Dynamic Penalties Weights Update**: We update the penalty weights dynamically without retraining the model.
+**Penalty Weights Update**: We update the penalty weights on-the-fly without retraining the model.
 
 ```python
 icp.weight_hamming = 1.5
