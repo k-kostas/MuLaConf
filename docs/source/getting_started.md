@@ -1,6 +1,5 @@
 # Getting Started
 
-
 ## Installation
 MuLaConf is available on both PyPI and Conda-forge.
 

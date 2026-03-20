@@ -5,7 +5,7 @@ If you use the package for a scientific publication, you are kindly requested to
 
 Katsios, K., & Papadopoulos, H. (2025). Incorporating Structural Penalties in Multi-label Conformal Prediction.
 *Proceedings of Machine Learning Research*, 266, 1-20.
-(`PDF <https://raw.githubusercontent.com/mlresearch/v266/main/assets/katsios25a/katsios25a.pdf>`_)
+(`Proceedings <https://proceedings.mlr.press/v266/katsios25a.html>`_)
 
 **BibTeX:**
 
