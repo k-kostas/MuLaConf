@@ -11,6 +11,8 @@ authors = [
 description = "Conformal Prediction for Multi-label classification."
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["conformal prediction", "multi-label", "classification", "uncertainty quantification", "pytorch", "scikit-learn"]
+license = {file = "LICENSE"}
 dependencies = [
     "numpy>=1.20.0",
     "scikit-learn>=1.0.0",
@@ -28,3 +30,4 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/k-kostas/MuLaConf"
 "Bug Tracker" = "https://github.com/k-kostas/MuLaConf/issues"
+"Documentation" = "https://mulaconf.readthedocs.io/"
