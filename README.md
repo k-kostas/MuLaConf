@@ -1,4 +1,4 @@
-# MuLaConf (Multi-Label Conformal Prediction)
+# MuLaConf : Multi-Label Conformal Prediction
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/bsd-3-clause)
