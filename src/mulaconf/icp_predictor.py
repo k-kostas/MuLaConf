@@ -529,7 +529,7 @@ class InductiveConformalPredictor:
         n_cal = len(cal_scores_ascending)
 
         all_scores_list = []
-        for i in range(len(probabilities)):
+        for i in tqdm(range(len(probabilities)), desc="Scoring combinations"):
             scores = self.all_combinations_scoring(probabilities[i])
             all_scores_list.append(scores)
         all_combinations_scores = torch.stack(all_scores_list)
