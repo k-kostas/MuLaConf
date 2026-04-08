@@ -3,11 +3,12 @@ import numpy as np
 import pandas as pd
 import warnings
 
+from tqdm import tqdm
 from typing import Tuple, List, Dict, Union, Optional
 from scipy.stats import kstest
 
 from .utils import _check_multihot_labels, _is_tensor
-
+from . import constants
 
 PredictionItem = Union[Tuple[torch.Tensor, float], torch.Tensor]
 SingleAlphaOutput = List[PredictionItem]
@@ -48,14 +49,15 @@ class PredictionRegions:
     """
 
     def __init__(self, p_values: torch.Tensor, combinations: torch.Tensor):
-        self.p_values = p_values
-        self.combinations = combinations
         self.device = p_values.device
+        self.p_values = p_values
+        self.combinations = combinations.to(self.device)
 
 
     def get_valid_tuples(self, alpha: float) -> List[torch.Tensor]:
         """
-        Extracts valid label combinations for a specific significance level.
+        Extracts valid label combinations for a specific significance level, using a batched approach
+        to prevent System RAM overflow on high-label datasets.
 
         A combination is considered valid if its p-value is greater than the significance level `alpha`.
 
@@ -75,21 +77,36 @@ class PredictionRegions:
               to ensure non-empty predictions.
         """
 
-        mask = self.p_values > alpha
-        row_counts = mask.sum(dim=1)
-        empty_mask = (row_counts == 0)
-        if empty_mask.any():
-            max_indices = self.p_values.argmax(dim=1)
-            mask[empty_mask, max_indices[empty_mask]] = True
-            row_counts[empty_mask] = 1
-        valid_indices = mask.nonzero()
-        comb_indices = valid_indices[:, 1]
-        flat_predictions = self.combinations[comb_indices]
+        all_valid_tuples = []
+        n_samples, n_combinations = self.p_values.shape
 
-        return list(torch.split(flat_predictions.int(), row_counts.cpu().tolist()))
+        batch_size = max(500, constants._REGION_BATCH_SIZE// n_combinations)
+
+        for i in range(0, n_samples, batch_size):
+            batch_p_values = self.p_values[i: i + batch_size]
+
+            mask = batch_p_values > alpha
+            row_counts = mask.sum(dim=1)
+            empty_mask = (row_counts == 0)
+
+            if empty_mask.any():
+                max_indices = batch_p_values.argmax(dim=1)
+                mask[empty_mask, max_indices[empty_mask]] = True
+                row_counts[empty_mask] = 1
+
+            valid_indices = mask.nonzero()
+            comb_indices = valid_indices[:, 1]
+            flat_predictions = self.combinations[comb_indices]
+
+            chunk_tuples = list(torch.split(flat_predictions.int(), row_counts.cpu().tolist()))
+            all_valid_tuples.extend(chunk_tuples)
+
+            del batch_p_values, mask, row_counts, empty_mask, valid_indices, comb_indices, flat_predictions
+
+        return all_valid_tuples
 
 
-    def get_true_label_p_value(self, true_label) -> torch.Tensor:
+    def _get_true_label_p_values(self, true_labelsets: torch.Tensor) -> torch.Tensor:
         """
         Retrieves the p-values assigned to the actual ground truth labels.
 
@@ -108,23 +125,54 @@ class PredictionRegions:
             Shape: (t_samples).
         """
 
-        matches = (true_label.unsqueeze(1) == self.combinations.unsqueeze(0)).all(dim=-1)
+        device = self.p_values.device
+        n_classes = self.combinations.shape[1]
+        n_samples = true_labelsets.shape[0]
 
-        return self.p_values[matches]
+        powers_of_two = 2 ** torch.arange(n_classes, device=device)
+
+        comb_hashes = (self.combinations * powers_of_two).sum(dim=1)
+        true_hashes = (true_labelsets * powers_of_two).sum(dim=1)
+
+        sorted_comb_hashes, sorted_indices = torch.sort(comb_hashes)
+        positions = torch.searchsorted(sorted_comb_hashes, true_hashes)
+
+        positions = torch.clamp(positions, max=len(sorted_comb_hashes) - 1)
+        match_indices = sorted_indices[positions]
+
+        return self.p_values[torch.arange(n_samples), match_indices]
 
 
-    def check_ks_test(self, true_labels) -> Dict[str, float]:
+    def _check_ks_test(self, true_pvalues: torch.Tensor) -> Dict[str, float]:
         """
         Performs a Kolmogorov-Smirnov test.
 
-        Tests if the p-values of the true labels follow a Uniform(0, 1) distribution.
+        Tests if the p-values of the true labels follow a Uniform(0, 1) distribution,
+        which is the theoretical guarantee of a perfectly calibrated Conformal Predictor.
+
+
+        .. note::
+           **Cap the evaluation at 1,000 samples**
+           In Conformal Prediction, p-values are calculated from a finite calibration set,
+           making them inherently discrete (they exist in steps of 1/(n_cal + 1)).
+           Because the KS-test evaluates against a perfectly continuous uniform distribution,
+           passing massive sample sizes (e.g., N > 10,000) gives the test excessive statistical
+           power. It will detect the valid, microscopic discrete gaps and falsely reject
+           the null hypothesis (the "Large N Problem"). Capping at 1,000 provides sufficient
+           power to detect severe miscalibration without triggering this discreteness paradox.
+
+           **Validity is set to 0.05**
+           Assume that the null hypothesis is that the distribution *is* perfectly uniform.
+           A resulting p-value > 0.05 means we fail to reject this
+           hypothesis, indicating the model's p-values are safely uniform and valid.
 
 
         Parameters
         ----------
-        true_labels : torch.Tensor
-            The ground truth labels.
-            Shape: (t_samples, c_classes).
+        true_p_values : torch.Tensor
+            The exact p-values corresponding to the ground truth labels.
+            Shape: (t_samples,).
+
 
         Returns
         -------
@@ -135,12 +183,12 @@ class PredictionRegions:
             - 'is_valid': Boolean indicating if the null hypothesis (uniformity) is not rejected.
         """
 
-        matches = (true_labels.unsqueeze(1) == self.combinations.unsqueeze(0)).all(dim=-1)
-        true_p_values = self.p_values[matches]
-
         if len(true_p_values) < 30:
             warnings.warn(f"KS-Test running with only {len(true_p_values)} samples. Results may be unreliable.",
                           RuntimeWarning)
+
+        if len(true_p_values) > 1_000:
+            true_p_values = np.random.choice(true_p_values, 1_000, replace=False)
 
         true_p_values_np = true_p_values.detach().cpu().numpy()
         ks_stat, ks_pval = kstest(true_p_values_np, 'uniform')
@@ -150,6 +198,50 @@ class PredictionRegions:
             "ks_p_value": ks_pval,
             "is_valid": ks_pval > 0.05
         }
+
+
+    def _parse_significance_level(
+            self,
+            significance_level: Union[float, List[float], np.ndarray, pd.Series, torch.Tensor]
+    ) -> Tuple[List[float], bool]:
+        """
+        Parse significance level input into a list of alphas.
+
+        Returns
+        -------
+        Tuple[List[float], bool]
+            A tuple of (alphas list, is_scalar flag).
+        """
+
+        is_scalar = False
+        if torch.is_tensor(significance_level):
+            if significance_level.ndim == 0:
+                is_scalar = True
+                alphas = [significance_level.item()]
+            else:
+                alphas = significance_level.tolist()
+        elif isinstance(significance_level, np.ndarray):
+            if significance_level.ndim == 0:
+                is_scalar = True
+                alphas = [significance_level.item()]
+            else:
+                alphas = significance_level.tolist()
+        elif isinstance(significance_level, pd.Series):
+            alphas = significance_level.tolist()
+        elif isinstance(significance_level, (list, tuple)):
+            alphas = list(significance_level)
+        else:
+            is_scalar = True
+            alphas = [significance_level]
+
+        alphas = [round(float(a), 3) for a in alphas]
+
+        for a in alphas:
+            if not (0 <= a <= 1):
+                raise ValueError(f"Significance level must be strictly between 0 and 1, got {a}")
+
+        return alphas, is_scalar
+
 
     @torch.no_grad()
     def __call__(self,
@@ -193,40 +285,19 @@ class PredictionRegions:
         else:
             print(f'Returning prediction regions for significance level {significance_level}.')
 
-        is_scalar = False
-        if torch.is_tensor(significance_level):
-            if significance_level.ndim == 0:
-                is_scalar = True
-                alphas = [significance_level.item()]
-            else:
-                alphas = significance_level.tolist()
-        elif isinstance(significance_level, np.ndarray):
-            if significance_level.ndim == 0:
-                is_scalar = True
-                alphas = [significance_level.item()]
-            else:
-                alphas = significance_level.tolist()
-        elif isinstance(significance_level, pd.Series):
-            alphas = significance_level.tolist()
-        elif isinstance(significance_level, (list, tuple)):
-            alphas = list(significance_level)
-        else:
-            is_scalar = True
-            alphas = [significance_level]
-        alphas = [round(float(a), 3) for a in alphas]
+        alphas, is_scalar = self._parse_significance_level(significance_level)
 
-        for a in alphas:
-            if not (0 <= a <= 1):
-                raise ValueError(f"Significance level must be strictly between 0 and 1, got {a}")
+        iterator = tqdm(alphas, desc="Extracting Prediction Sets") if len(alphas) > 1 else alphas
 
         results = {}
-        for alpha in alphas:
+        for alpha in iterator:
             results[alpha] = self.get_valid_tuples(alpha)
 
         if is_scalar:
             return results[alphas[0]]
         else:
             return results
+
 
     @torch.no_grad()
     def evaluate(self,
@@ -254,13 +325,13 @@ class PredictionRegions:
         return_n_criterion : bool, default=True
             Whether to calculate average set size (N-criterion) (requires `true labelsets` and `significance_level`).
         return_s_criterion : bool, default=True
-            Whether to calculate the S-criterion (sum of p-values), a threshold-independent efficiency metric.
+            Whether to calculate the S-criterion (sum of p-values), a significance level independent efficiency metric.
         return_ks_test : bool, default=True
             Whether to perform the KS-test for uniformity (requires `true labelsets`).
         true_labelsets : torch.Tensor or array-like, optional
             The ground truth labels. Required for coverage and p-value metrics.
         significance_level : float or List[float], optional
-            The alpha level(s) to evaluate coverage and N-criterion (set size).
+            The significance level(s) to evaluate coverage and N-criterion (set size).
 
 
         .. note::
@@ -277,6 +348,8 @@ class PredictionRegions:
         Raises
         ------
         ValueError
+            If `true_labelsets`` and the ``significance_level`` is not provided.
+        ValueError
             If ``true_labelsets`` shape does not match the number of classes.
 
 
@@ -292,96 +365,68 @@ class PredictionRegions:
         >>> metrics_multi = prediction_regions_obj.evaluate(true_labelsets=y_test, significance_level=[0.05, 0.1])
         """
 
-        if true_labelsets is not None:
-            true_labelsets = _check_multihot_labels(true_labelsets)
-            true_labelsets = _is_tensor(true_labelsets).to(self.device)
+        if true_labelsets is None and significance_level is None:
+            raise ValueError("You must provide either true_labelsets or significance_level, or both.")
 
-            if true_labelsets.shape[1] != self.combinations.shape[1]:
-                raise ValueError("True labels must have the same number of columns as the number of classes.")
+        if true_labelsets is None:
+            out = {}
+            if return_s_criterion: out['s_criterion'] = self.p_values.sum(dim=1).mean().item()
+            if return_true_label_p_value or return_coverage or return_n_criterion or return_ks_test:
+                warnings.warn("Missing true_labelsets. Only s_criterion calculated.", RuntimeWarning)
+            return out
 
-            if significance_level is not None:
-                predictions = self(significance_level)
+        true_labelsets = _check_multihot_labels(true_labelsets)
+        true_labelsets = _is_tensor(true_labelsets).to(self.device)
 
-                def _evaluate_metrics(preds_list, targets):
-                    total = len(targets)
-                    covered = 0
-                    size_sum = 0
+        if true_labelsets.shape[1] != self.combinations.shape[1]:
+            raise ValueError("True labels must have the same number of columns as the number of classes.")
 
-                    for i in range(total):
-                        valid_combs = preds_list[i]
-                        current_size = len(valid_combs)
+        true_p_values = self._get_true_label_p_values(true_labelsets)
 
-                        if return_n_criterion:
-                            size_sum += current_size
 
-                        if return_coverage and current_size > 0:
-                            target = targets[i]
-                            matches = (valid_combs == target).all(dim=1)
-                            if matches.any():
-                                covered += 1
+        if significance_level is not None:
+            alphas, is_scalar = self._parse_significance_level(significance_level)
 
-                    out = {}
-                    if return_true_label_p_value:
-                        out['true_labels_p_values'] = self.get_true_label_p_value(true_labelsets)
-
-                    if return_coverage:
-                        out['coverage'] = covered / total if total > 0 else 0.0
-
-                    if return_n_criterion:
-                        out['n_criterion'] = size_sum / total if total > 0 else 0.0
-
-                    if return_s_criterion:
-                        out['s_criterion'] = self.p_values.sum(dim=1).mean().item()
-
-                    if return_ks_test:
-                        out['ks_test_metrics'] = self.check_ks_test(true_labelsets)
-
-                    return out
-
-                if isinstance(predictions, dict):
-                    return {alpha: _evaluate_metrics(preds, true_labelsets) for alpha, preds in predictions.items()}
-                else:
-                    return _evaluate_metrics(predictions, true_labelsets)
-
-            else:
-
-                if true_labelsets.shape[1] != self.combinations.shape[1]:
-                    raise ValueError("True labels must have the same number of columns as the number of classes.")
-
+            def _evaluate_metrics(alpha):
                 out = {}
                 if return_true_label_p_value:
-                    out['true_labels_p_values'] = self.get_true_label_p_value(true_labelsets)
+                    out['true_labels_p_values'] = true_p_values
 
                 if return_coverage:
-                    warnings.warn("Returning coverage is not supported when significance_level is not provided.", RuntimeWarning)
+                    out['coverage'] = (true_p_values > alpha).float().mean().item()
 
                 if return_n_criterion:
-                    warnings.warn("Returning n-criterion is not supported when significance_level is not provided.", RuntimeWarning)
+                    n_samples, n_combinations = self.p_values.shape
+                    batch_size = max(1, constants._REGION_BATCH_SIZE // n_combinations)
+                    total_sizes = 0
+
+                    for i in range(0, n_samples, batch_size):
+                        batch_p = self.p_values[i: i + batch_size]
+                        counts = (batch_p > alpha).sum(dim=1)
+                        counts[counts == 0] = 1
+                        total_sizes += counts.sum().item()
+
+                    out['n_criterion'] = total_sizes / n_samples
 
                 if return_s_criterion:
                     out['s_criterion'] = self.p_values.sum(dim=1).mean().item()
 
                 if return_ks_test:
-                    out['ks_test_metrics'] = self.check_ks_test(true_labelsets)
+                    out['ks_test_metrics'] = self._check_ks_test(true_p_values)
 
                 return out
 
+            if is_scalar:
+                return _evaluate_metrics(alphas[0])
+            else:
+                return {a: _evaluate_metrics(a) for a in tqdm(alphas, desc="Evaluating Metrics")}
+
         else:
-
             out = {}
-            if return_true_label_p_value:
-                warnings.warn("Returning true label p-values is not supported when true labels are not provided.", RuntimeWarning)
+            if return_true_label_p_value: out['true_labels_p_values'] = true_p_values
+            if return_s_criterion: out['s_criterion'] = self.p_values.sum(dim=1).mean().item()
+            if return_ks_test: out['ks_test_metrics'] = self._check_ks_test(true_p_values)
 
-            if return_coverage:
-                warnings.warn("Returning coverage is not supported when true labels and significance_level are not provided.", RuntimeWarning)
-
-            if return_n_criterion:
-                warnings.warn("Returning n-criterion is not supported when true labels and significance_level are not provided.", RuntimeWarning)
-
-            if return_s_criterion:
-                out['s_criterion'] = self.p_values.sum(dim=1).mean().item()
-
-            if return_ks_test:
-                warnings.warn("Returning ks-test metrics is not supported when true labels are not provided.", RuntimeWarning)
-
+            if return_coverage or return_n_criterion:
+                warnings.warn("Coverage/N-criterion require a significance_level.", RuntimeWarning)
             return out

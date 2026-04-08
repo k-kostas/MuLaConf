@@ -9,12 +9,14 @@ in multi-label classification tasks using structural penalties.
 from .icp_wrapper import ICPWrapper
 from .icp_predictor import InductiveConformalPredictor
 from .prediction_regions import PredictionRegions
+from . import constants
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ICPWrapper",
     "InductiveConformalPredictor",
     "PredictionRegions",
-    "__version__",
+    "constants",
+    "__version__"
 ]

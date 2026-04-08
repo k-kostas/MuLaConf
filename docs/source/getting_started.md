@@ -15,30 +15,35 @@ conda install -c conda-forge mulaconf
 
 
 ## Tutorial
-The MuLaConf is a Python package implementing the novel Conformal Prediction framework introduced
-in "Incorporating Structural Penalties in Multi-label Conformal Prediction"
-[[Katsios & Papadopoulos, 2025](https://proceedings.mlr.press/v266/katsios25a.html)].
-Based on the 2025 research by Katsios and Papadopoulos, this package addresses the structural limitation by integrating
-Structural Penalties into the nonconformity measure. By penalizing predictions based on their label dependencies
-from the training data's structure, the algorithm produces valid prediction sets.
+MuLaConf is a Python package implementing the novel Conformal Prediction framework introduced
+in "Incorporating Structural Penalties in Multi-label Conformal Prediction" 
+[[Katsios & Papadopoulos, 2025](https://proceedings.mlr.press/v266/katsios25a.html)]. 
+Based on this research, the package integrates distance metrics and structural penalties. By penalizing the
+nonconformity scores based on the label dependencies of the training data, it produces valid,
+informative prediction sets.
 
-The package implements the two key penalties, associated with the Mahalanobis nonconformity measure:
+The package offers configurations across two main components:
 
-* Hamming Penalty: Penalizes label combinations that are based in the minimum Hamming distance from the true
-label-sets found in the proper training data.
+**1. Distance Measures**
+Used to calculate the base nonconformity scores:
+* **Mahalanobis:** Accounts for label correlations by forming the covariance matrix of the error vectors.
+* **Euclidean:** A standard, unweighted baseline distance metric.
 
-* Cardinality Penalty: Penalizes label combinations whose size (number of active labels) deviates significantly
-from the expected cardinality of the training sets.
+**2. Structural Penalties**
+Can be applied on top of the distance measures to further reduce the size of the prediction sets:
+* **Hamming Penalty:** Penalizes label combinations based on their minimum Hamming distance from the true label-sets
+found in the proper-training data.
+* **Cardinality Penalty:** Penalizes label combinations whose size (number of active labels) deviates significantly
+from the expected cardinality of the proper-training set.
 
 
 ### Load and split data
-We will load the data,
-split it into proper training, calibration and sets, train the model and evaluate the conformal predictions.
-For example, we will use the **Yeast** dataset after we have preprocessed the data into features and labels
+We will load the data, split it into proper-training, calibration and sets, train the model and evaluate the conformal
+predictions. For example, we will use the **Yeast** dataset after we have preprocessed the data into features and labels
 in CSV format.
 
 ~~~{Note}
-The labels should be represented as multi-hot vectors.
+The labels should be represented as **multi-hot vectors**.
 ~~~
 
 ```python
@@ -72,11 +77,11 @@ Scikit-Learn classifiers. It bridges Scikit-Learn (for the underlying classifier
 
 To initialize the wrapper, you must provide the base classifier and, optionally, the structural penalty weights.
 
-  * Penalty Weights: The weight_hamming and weight_cardinality parameters control the strength of the penalties.
-    They must be non-negative real values (default is 0.0, meaning disabled).
+  * Penalty Weights: The `weight_hamming` and `weight_cardinality` parameters control the strength of the penalties.
+    They must be non-negative real values (default is 0.0).
 
-  * Device: The device parameter specifies where tensor computations occur. Set this to 'cpu' (default)
-    or 'cuda' to leverage GPU acceleration.
+  * Device: The device parameter specifies where tensor computations occur. Set this to `'cpu'` (default)
+    or `'cuda'` to leverage GPU acceleration.
 
   ~~~{Note}
    **GPU Acceleration**:
@@ -86,14 +91,14 @@ To initialize the wrapper, you must provide the base classifier and, optionally,
 
 
 #### Handling Classifier Arguments and Fitting
-The fit method of the ICPWrapper accepts the features and the multi-hot vectors for the true label-sets of the proper
-training data. It trains the underlying classifier and calculates the covariance matrix and the structural penalties
-for the inductive conformal predictor.
+The fit method of the ICPWrapper accepts the features and the multi-hot vectors for the true label-sets of the 
+proper-training data. It trains the underlying classifier, calculates the covariance matrix and the structural
+penalties for the inductive conformal predictor.
 
 When using meta-estimators (e.g., [`MultiOutputClassifier`](https://scikit-learn.org/stable/modules/generated/sklearn.multioutput.MultiOutputClassifier.html),
 [`ClassifierChain`](https://scikit-learn.org/stable/modules/generated/sklearn.multioutput.ClassifierChain.html),
 [`OneVsRestClassifier`](https://scikit-learn.org/stable/modules/generated/sklearn.multioutput.OneVsRestClassifier.html)),
-you can configure the inner model's parameters in two ways:
+you can configure the base learnern's parameters in two ways:
 
 1. Direct Initialization
    Initialize the inner classifier with its parameters before passing it to the wrapper.
@@ -140,6 +145,7 @@ nonconformity scores, which are essential for calculating the p-values required 
 wrapper.calibrate(X_calib, y_calib)
 ```
 
+
 ~~~{Note}
 **Switching Underlying Scikit-Learn Strategies** :
  You can switch the classification strategy or update its parameters. If the wrapper detects a change (via fingerprinting) during calibration, it will automatically retrain the new model on the cached proper training data.
@@ -156,6 +162,20 @@ wrapper.kwargs = {'estimator__n_neighbors': 5}
 wrapper.calibrate(X_calib, y_calib)
 ```
 ~~~
+
+~~~{Note}
+**On-the-fly Updates**: You can easily update the distance measure and penalty weights after the calibration
+process without passing your data again. Calling `calibrate()` without arguments will automatically
+apply all pending updates simultaneously using the cached calibration data.
+
+```python
+wrapper.measure = 'norm'
+wrapper.weight_hamming = 1.0
+wrapper.weight_cardinality = 0.5
+wrapper.calibrate()
+```
+~~~
+
 
 ### Predicting Valid Conformal Regions and Evaluation Metrics
 
@@ -195,14 +215,16 @@ prediction_sets = wrapper.predict(X_test)(significance_level=0.1)
 ```
 
 ~~~{Note}
-**Penalty Weights Update**: We update the penalty weights on-the-fly without retraining the model.
+**On-the-fly Updates**: Update diastance measure and penalty weights on-the-fly and predict again.
+The predictor will automatically apply the pending updates and recalibrate the scores before generating
+the new predictions.
 
 ```python
-wrapper.icp.weight_hamming = 1.5
-wrapper.icp.weight_cardinality = 0.5
-
-# Predict with new penalties
-updated_prediction_sets = wrapper.predict(X_test)(significance_level=0.1)
+wrapper.measure = 'norm'
+wrapper.weight_hamming = 1.0
+wrapper.weight_cardinality = 0.5
+new_prediction_obj = wrapper.predict(test_probs)
+new_prediction_sets = new_prediction_obj(significance_level=0.1)
 ```
 ~~~
 
@@ -288,6 +310,42 @@ and labels.
 icp.calibrate(probabilities=calib_probs,labels=calib_labels)
 ```
 
+
+~~~{Note}
+**On-the-fly Updates**: You can update the distance `measure` ('norm' or 'mahalanobis'), `weight_hamming`,
+and `weight_cardinality` at any time after the calibration process.
+
+The predictor utilizes lazy evaluation for automatic recalibration. This means
+you do not need to manually pass your calibration data again or explicitly call
+`calibrate()`. Simply assign new values to the properties (e.g., `icp.measure = 'norm'`,
+`icp.weight_hamming = 1.0`, `icp.weight_cardinality = 0.5`) and immediately call `calibrate()`. It will
+automatically reform the underlying covariance matrix and recalibrate the scores
+on-the-fly.
+
+1. The `calibrate` method recalculates the distance matrix and scores after a measure update.
+```python
+icp.measure = 'norm'
+icp.calibrate()
+```
+
+2. The `calibrate` method recalculates calibration scores after penalty weight update.
+```python
+icp.weight_hamming = 1.0
+icp.weight_cardinality = 0.5
+icp.calibrate()
+```
+
+3. The `calibrate` method recalculates the covariance matrix and nonconformity scores after updating measure
+and penalty weights.
+```python 
+icp.measure = 'norm'
+icp.weight_hamming = 1.0
+icp.weight_cardinality = 0.5
+icp.calibrate()
+```
+~~~
+
+
 3. ### Predict Valid Conformal Regions
 We generate prediction regions for the test set using the predict method.
 
@@ -324,16 +382,19 @@ prediction_sets = icp.predict(test_probs)(significance_level=0.1)
 ```
 
 ~~~{Note}
-**Penalty Weights Update**: We update the penalty weights on-the-fly without retraining the model.
+**On-the-fly Updates**: Update diastance measure and penalty weights on-the-fly and predict again.
+The predictor will automatically apply the pending updates and recalibrate the scores before generating
+the new predictions.
 
 ```python
-icp.weight_hamming = 1.5
+icp.measure = 'norm'
+icp.weight_hamming = 1.0
 icp.weight_cardinality = 0.5
-
-# Predict with new penalties
-updated_prediction_sets = icp.predict(test_probs)(significance_level=0.1)
+new_prediction_obj = icp.predict(test_probs)
+new_prediction_sets = new_prediction_obj(significance_level=0.1)
 ```
 ~~~
+
 
 ~~~{Note}
 **Accessing P-Values**: You also have direct access to the raw p-values for every possible label combination.
@@ -385,3 +446,40 @@ print(metrics)
                     }
  }
 ```
+
+
+## Performance & Memory Management
+
+Because Powerset Scoring evaluates all possible label combinations, the prediction math scales
+exponentially at $O(2^C)$ where $C$ is the number of classes. 
+
+To prevent Out-Of-Memory (OOM) crashes on standard hardware, **MuLaConf** uses batching and tensor expansion.
+The default limits are tuned for standard laptops (8GB RAM) and standard GPUs (8GB VRAM). 
+
+If you are running on high-end hardware, or if you are conducting rigorous execution-time benchmarks,
+you can manually override the module-level constants to dramatically speed up execution.
+
+### How to tune the hardware limits
+Simply import the `constants` module and overwrite the values before initializing or running the predictor:
+
+```python
+import mulaconf.constants as constants
+from mulaconf.icp_wrapper import ICPWrapper
+
+# 1. Increase GPU batching for high-end cards (e.g., 24GB VRAM)
+constants._GPU_MAX_COMBINATIONS = 15_000_000
+
+# 2. Turn off cache-clearing for raw benchmarking
+# (Removes the synchronization delay, but risks VRAM fragmentation)
+constants._EMPTY_CUDA_CACHE = False
+
+# 3. Run your code normally
+wrapper = ICPWrapper(base_model)
+wrapper.fit(X_train, y_train)
+```
+
+~~~{Note}
+**Hardware Cheat Sheet**:
+For a comprehensive guide on exactly what batching numbers to use for your specific RAM and GPU VRAM setup,
+refer to the documentation at the top of the `constants.py` file.
+~~~

@@ -6,28 +6,74 @@ from typing import Union
 
 from .prediction_regions import PredictionRegions
 from .utils import _check_multihot_labels, _is_tensor, _normalize_device
+from . import constants
 
-_BATCH_SIZE = 2048
 InputData = Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
+
 
 class InductiveConformalPredictor:
     """
     Inductive Conformal Predictor with Structural Penalties.
 
     This class implements Inductive Conformal Prediction (ICP) for multi-label classification, extended with
-    structural penalties (Hamming and Cardinality). It uses the Mahalanobis distance in the error vector space
-    to account for label correlations. Additionally, it allows for on-the-fly updating of the penalty weights
-    without retraining the underlying model or recalculating the covariance matrix.
+    structural penalties (Hamming and Cardinality). It uses a generalized distance metric (e.g., Mahalanobis
+    or Euclidean Norm) in the error vector space to score predictions. Additionally, it allows for on-the-fly
+    updating of the distance measure and penalty weights without retraining the underlying model or requiring
+    the calibration data to be passed again.
 
     .. note::
-       The predictor calculates the Covariance Matrix based on the training set's error vectors,
-       and pre-calculates the structural penalty vectors for all possible label combinations.
+       The predictor calculates and caches the structural penalty vectors for all possible label
+       combinations during initialization.
+
+    .. note::
+       **On-the-Fly Updates**:
+       You can update the distance measure (``'norm'`` or ``'mahalanobis'``), ``weight_hamming``,
+       and ``weight_cardinality`` at any time after the calibration process.
+
+       The predictor utilizes lazy evaluation for automatic recalibration. This means
+       you do not need to manually pass your calibration data again or explicitly call
+       ``calibrate()``. Simply assign new values to the properties (e.g., ``icp.measure = 'norm'``,
+       ``icp.weight_hamming = 1.0``, ``icp.weight_cardinality = 0.5``) and immediately call ``predict()``. It will
+       automatically reform the underlying covariance matrix and recalibrate the scores
+       on the fly before generating predictions.
+
 
     .. note::
        **Memory Management**:
-       This class processes large datasets in batches to avoid GPU/CPU memory overflow.
-       For systems with 16GB of memory, we recommend limiting the task to a maximum of 25 labels.
-       The internal batch size is controlled by the module-level constant ``_BATCH_SIZE`` (default: 2048).
+       This class uses optimized batching, tensor expansion (compressed loading) to prevent GPU/CPU memory
+       overflow when processing exponential
+       powerset combinations. Even with these optimizations, Powerset Scoring prediction scales
+       at O(2^C), where C is the number of labels. For standard systems with 16GB of RAM/VRAM,
+       we recommend limiting tasks to a maximum of ~20 labels.
+
+       The default batching limits are approximated based on PyTorch's
+       ``float32`` data type (which consumes 4 bytes per element) and the overhead
+       required to hold multiple massive intermediate tensors simultaneously in memory
+       during calculation.
+
+       Users can manually tune the hardware limits and performance toggles by modifying the module-level configuration
+       variables (located in ``constants.py``) to optimize for their specific CPU/GPU memory constraints:
+
+       ``_CPU_MAX_COMBINATIONS``: Caps the maximum number of combinations processed at once during
+       heavy matrix math on the CPU to protect system RAM (default: 2,000,000).
+
+       ``_GPU_MAX_COMBINATIONS``: Caps the maximum number of combinations processed at once during
+       heavy matrix math on the GPU to protect VRAM (default: 5,000,000).
+
+       ``_REGION_BATCH_SIZE``: Caps memory usage (System RAM) when extracting the final prediction sets.
+       Because this phase relies on lightweight boolean filtering rather than heavy matrix operations,
+       this threshold is safely set much higher (default: 100,000,000).
+
+       ``_EMPTY_CUDA_CACHE``: Controls whether the engine aggressively clears the CUDA memory cache after
+       heavy tensor operations. Keep this set to ``True`` (default) to prevent VRAM fragmentation and
+       Out-Of-Memory crashes. Set to ``False`` only for strict performance benchmarking to bypass the
+       ~300ms OS-level synchronization delay.
+
+       Increasing these values speeds up the time required to generate predictions, but risks memory overflow
+       and system instability. Decreasing these values results in slower predictions but guarantees safety
+       from system crashes. In the documentation of ``constants.py``, you can find a hardware cheat sheet
+       for memory requirements.
+
 
     Parameters
     ----------
@@ -37,6 +83,9 @@ class InductiveConformalPredictor:
     true_labels : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
         The ground truth binary labels for the proper training set.
         Shape: (n_samples, c_classes).
+    measure : str, optional, default='mahalanobis'
+        The distance metric used to score predictions.
+        Supported options: 'mahalanobis' (accounts for correlations) or 'norm' (standard Euclidean).
     weight_hamming : float, optional, default=0.0
         The weight for the Hamming distance penalty. Higher values penalize predictions
         that are structurally different from observed training labels.
@@ -47,46 +96,34 @@ class InductiveConformalPredictor:
         The device to use for computations ('cpu' or 'cuda').
 
 
-    Raises
-    ------
-    ValueError
-        If weights are negative.
-    RuntimeError
-        If `predicted_probabilities` shape does not match the number of classes.
-
-
-    Examples
-    --------
+    Example
+    -------
     >>> import torch
     >>>
-    >>> # 1. Generate dummy training data (100 samples, 5 classes)
-    >>> train_probs = torch.rand(100, 5)
-    >>> train_labels = torch.randint(0, 2, (100, 5)).float()
+    >>> # 1. Generate dummy training data (500 samples, 5 classes)
+    >>> train_probs = torch.rand(500, 5)
+    >>> train_labels = torch.randint(0, 2, (500, 5)).float()
     >>>
     >>> # 2. Initialize the predictor
     >>> icp = InductiveConformalPredictor(
     ...     predicted_probabilities=train_probs,
     ...     true_labels=train_labels,
-    ...     weight_hamming=0.5,
-    ...     weight_cardinality=0.3,
+    ...     measure='mahalanobis',
+    ...     weight_hamming=2.0,
+    ...     weight_cardinality=1.5,
     ... )
     """
 
     def __init__(self,
-                 predicted_probabilities : InputData,
-                 true_labels : InputData,
+                 predicted_probabilities: InputData,
+                 true_labels: InputData,
+                 measure: str = 'mahalanobis',
                  weight_hamming: float = 0.0,
                  weight_cardinality: float = 0.0,
                  device: Union[str, torch.device] = 'cpu',
                  ):
 
         print(f'\nInitializing Inductive Conformal Predictor')
-
-        if weight_hamming < 0:
-            raise ValueError("The weight of hamming penalty cannot be negative.")
-
-        if weight_cardinality < 0:
-            raise ValueError("The weight of cardinality penalty cannot be negative.")
 
         self.device = _normalize_device(device)
 
@@ -98,30 +135,68 @@ class InductiveConformalPredictor:
             raise RuntimeError("Proper train labels and probabilities must have the same number of columns.")
 
         self.n_classes = true_labels.shape[1]
-        self._weight_hamming = weight_hamming
-        self._weight_cardinality = weight_cardinality
+
+        self._measure = measure.lower().strip()
+        if self._measure not in ['mahalanobis', 'norm']:
+            raise ValueError(f"Invalid measure '{measure}'. Supported options are 'mahalanobis' or 'norm'.")
+
+        self.matrix_power_parameter = -1.0 if self._measure == 'mahalanobis' else 0.0
+        self._weight_hamming = float(weight_hamming)
+        self._weight_cardinality = float(weight_cardinality)
 
         self.combinations = torch.cartesian_prod(
             *[torch.tensor([False, True], device=self.device)] * self.n_classes
         )
 
         self.proper_train_labels = true_labels
+        self.proper_train_probabilities = predicted_probabilities
+
+        self.calib_probabilities = None
+        self.calib_labels = None
 
         self._hamming_penalties = None
         self._cardinality_penalties = None
-        self._inverse_covariance_matrix = None
+        self._distance_matrix = None
 
-        self._mahalanobis_max_score = None
+        self._max_distance_score = None
         self._calib_normalized_scores = None
         self._calib_indices = None
         self.sorted_calibration_scores = None
 
         self._update_weight_hamming = False
         self._update_weight_cardinality = False
+        self._update_measure = False
 
         self.hamming_penalties_preprocessing(self.proper_train_labels)
         self.cardinality_penalties_preprocessing(self.proper_train_labels)
-        self.covariance_matrix_preprocessing(predicted_probabilities, self.proper_train_labels)
+        self.covariance_matrix_preprocessing(self.proper_train_probabilities, self.proper_train_labels)
+
+
+    @property
+    def measure(self) -> str:
+        """
+        Getter for the current distance measure.
+        """
+
+        return self._measure
+
+    @measure.setter
+    def measure(self, value: str):
+        """
+        Set the distance measure.
+        Triggers a flag to rebuild the covariance matrix and recalculate calibration scores.
+        """
+
+        cleaned_value = str(value).lower().strip()
+        if cleaned_value not in ['mahalanobis', 'norm']:
+            raise ValueError(f"Invalid measure '{value}'. Supported options are 'mahalanobis' or 'norm'.")
+
+        if self._measure != cleaned_value:
+            self._measure = cleaned_value
+            self.matrix_power_parameter = -1.0 if self._measure == 'mahalanobis' else 0.0
+
+            self._update_measure = True
+            print(f"Measure changed to '{cleaned_value}'. Flagged for recalibration.")
 
 
     @property
@@ -140,6 +215,7 @@ class InductiveConformalPredictor:
         Setting this property triggers a flag to recalculate calibration scores
         during the next prediction call without re-running the
         full calibration procedure.
+
 
         .. note::
             If switching from 0.0 to a positive value, Hamming penalties are recalculated.
@@ -182,7 +258,7 @@ class InductiveConformalPredictor:
         Set the Cardinality penalty weight.
 
         Setting this property triggers a flag to recalculate calibration scores
-        during the next prediction call without re-running the
+        during the next prediction call without rerunning the
         full calibration procedure.
 
         .. note::
@@ -220,11 +296,13 @@ class InductiveConformalPredictor:
         The penalty is defined as the minimum Hamming distance from a combination
         to any observed label vector in the provided labels.
 
+
         Parameters
         ----------
         labels : torch.Tensor
             The set of ground truth labels of the proper training set.
             Shape: (n_samples, c_classes).
+
 
         Example
         --------
@@ -235,19 +313,40 @@ class InductiveConformalPredictor:
 
         if self._weight_hamming == 0:
             self._hamming_penalties = torch.zeros(self.combinations.shape[0], device=self.device)
-        else:
-            batch_size = _BATCH_SIZE
-            min_distances_list = []
-            iterator = range(0, self.combinations.shape[0], batch_size)
-            if self.combinations.shape[0] > batch_size:
-                iterator = tqdm(iterator, desc="Calculating Hamming Penalties")
-            for i in iterator:
-                comb_batch = self.combinations[i: i + batch_size]
-                diffs = (comb_batch.unsqueeze(1) != labels.unsqueeze(0))
-                batch_loss = torch.sum(diffs.float() / self.n_classes, dim=-1)
-                batch_min_dists = torch.min(batch_loss, dim=1).values
-                min_distances_list.append(batch_min_dists)
-            self._hamming_penalties = torch.cat(min_distances_list)
+            return
+
+        labels = labels.float().to(self.device)
+        labels_sum = labels.sum(dim=1)
+
+        n_samples = labels.shape[0]
+
+        max_combs = constants._GPU_MAX_COMBINATIONS if str(self.device).startswith('cuda') else constants._CPU_MAX_COMBINATIONS
+        batch_size = max(1, max_combs // n_samples)
+
+        min_distances_list = []
+        iterator = range(0, self.combinations.shape[0], batch_size)
+        if self.combinations.shape[0] > batch_size:
+            iterator = tqdm(iterator, desc="Calculating Hamming Penalties")
+
+        for i in iterator:
+            comb_batch = self.combinations[i: i + batch_size].float().to(self.device)
+            comb_sum = comb_batch.sum(dim=1, keepdim=True)
+
+            dot_product = comb_batch @ labels.T
+            dot_product.mul_(-2.0)
+            dot_product.add_(comb_sum)
+            dot_product.add_(labels_sum)
+
+            batch_loss = dot_product / self.n_classes
+            batch_min_dists = torch.min(batch_loss, dim=1).values
+            min_distances_list.append(batch_min_dists)
+
+            del comb_batch, comb_sum, dot_product, batch_loss, batch_min_dists
+
+        if torch.cuda.is_available() and constants._EMPTY_CUDA_CACHE:
+            torch.cuda.empty_cache()
+
+        self._hamming_penalties = torch.cat(min_distances_list)
         print("Hamming penalties calculated with shape:", self._hamming_penalties.shape)
 
 
@@ -276,23 +375,47 @@ class InductiveConformalPredictor:
 
         if self._weight_cardinality == 0:
             self._cardinality_penalties = torch.zeros(self.combinations.shape[0], device=self.device)
-        else:
-            card_counts = torch.bincount(torch.sum(labels, dim=1).long(), minlength=self.n_classes + 1)
-            total_counts = card_counts.sum()
-            comb_cards = torch.sum(self.combinations.long(), dim=1)
+            return
 
-            if total_counts > 0:
-                self._cardinality_penalties = 1 - (card_counts[comb_cards] / total_counts)
-            else:
-                self._cardinality_penalties = torch.ones_like(comb_cards, dtype=torch.float)
+        labels = labels.to(self.device)
+        card_counts = torch.bincount(torch.sum(labels, dim=1).long(), minlength=self.n_classes + 1)
+        total_counts = card_counts.sum()
+
+        if total_counts > 0:
+            penalty_lookup = 1.0 - (card_counts.float() / total_counts.float())
+        else:
+            penalty_lookup = torch.ones(self.n_classes + 1, dtype=torch.float, device=self.device)
+
+        batch_size = constants._GPU_MAX_COMBINATIONS if str(self.device).startswith('cuda') else constants._CPU_MAX_COMBINATIONS
+        penalties_list = []
+
+        iterator = range(0, self.combinations.shape[0], batch_size)
+        if self.combinations.shape[0] > batch_size:
+            iterator = tqdm(iterator, desc="Calculating Cardinality Penalties")
+
+        for i in iterator:
+            comb_chunk = self.combinations[i: i + batch_size]
+            chunk_cards = torch.sum(comb_chunk, dim=1).long()
+            chunk_penalties = penalty_lookup[chunk_cards]
+            penalties_list.append(chunk_penalties)
+
+            del comb_chunk, chunk_cards, chunk_penalties
+
+        if torch.cuda.is_available() and constants._EMPTY_CUDA_CACHE:
+            torch.cuda.empty_cache()
+
+        self._cardinality_penalties = torch.cat(penalties_list)
         print("Cardinality penalties calculated with shape:", self._cardinality_penalties.shape)
 
 
     @torch.no_grad()
     def covariance_matrix_preprocessing(self, probabilities: torch.Tensor, labels: torch.Tensor):
         """
-        Computes the Inverse Covariance Matrix of the error vectors
+        Computes the generalized covariance matrix for the error vectors
         (|Predicted Probabilities - Labels|) on the Proper Training Set.
+
+        If ``measure='mahalanobis'``, this computes the Inverse Covariance Matrix.
+        If ``measure='norm'``, this effectively computes an Identity Matrix.
 
 
         Parameters
@@ -303,6 +426,14 @@ class InductiveConformalPredictor:
         labels : torch.Tensor
             True labels for the proper training set.
              Shape: (n_samples, c_classes).
+
+
+        Raises
+        ------
+        RuntimeError
+            If the number of classes is less than 2. Single-class datasets are not
+            supported for multi-label conformal prediction.
+
 
         Example
         --------
@@ -315,30 +446,39 @@ class InductiveConformalPredictor:
         if probabilities.ndim == 1:
             probabilities = probabilities.unsqueeze(0)
 
+        if probabilities.shape[1] < 2:
+            raise RuntimeError(
+                f"InductiveConformalPredictor requires at least 2 classes, but got {probabilities.shape[1]}. "
+                "Single-class datasets are not supported for multi-label conformal prediction."
+            )
+
         errors = torch.abs(probabilities - labels)
         covariance_matrix = torch.cov(errors.T)
         eigvalues, eigvectors = torch.linalg.eig(covariance_matrix)
         eigvalues_real = eigvalues.real
         eigvalues_real[eigvalues_real <= 0] = 1e-32
 
-        self._inverse_covariance_matrix = torch.linalg.inv(
-            eigvectors.real @ torch.diag(eigvalues_real) @ eigvectors.real.T
+        diagonal_covariance_matrix_power = torch.diag(eigvalues_real.pow(self.matrix_power_parameter))
+
+        self._distance_matrix = (
+                eigvectors.real @ diagonal_covariance_matrix_power @ eigvectors.real.T
         ).to(device=self.device)
 
         ones = torch.ones(self.n_classes, device=self.device)
-        self._mahalanobis_max_score = torch.sqrt(ones @ self._inverse_covariance_matrix @ ones).to(device=self.device)
-        print("Covariance matrix calculated with shape:", self._inverse_covariance_matrix.shape)
+        self._max_distance_score = torch.sqrt(ones @ self._distance_matrix @ ones).to(device=self.device)
+        print(f"Distance matrix calculated (Measure: {self._measure}) with shape:", self._distance_matrix.shape)
 
 
     def _update_calibration_scores(self):
         """
         Updates and sorts calibration scores based on current penalty weights.
-        Internal method called automatically by predict() or calibrate() if weights change.
+        Internal method called automatically by ``predict()`` or ``calibrate()`` if weights change.
+
 
         Raises
         ------
         RuntimeError
-            If calibration scores are not initialized. Call calibrate() with calibration features probabilities and labels first.
+            If calibration scores are not initialized. Call ``calibrate()`` with calibration features probabilities and labels first.
         """
 
         if self._calib_normalized_scores is not None and self._calib_indices is not None:
@@ -351,20 +491,21 @@ class InductiveConformalPredictor:
             self._update_weight_cardinality = False
             print("Calibration scores calculated with shape:", self.sorted_calibration_scores.shape)
         else:
-            raise RuntimeError("Calibration scores are not initialized. Call calibrate() with calibration features probabilities and labels first.")
+            raise RuntimeError("Calibration scores are not initialized. Call calibrate() first.")
 
 
     @torch.no_grad()
-    def calibrate(self, probabilities: InputData=None, labels:InputData=None):
+    def calibrate(self, probabilities: InputData = None, labels: InputData = None):
         """
         Calibrates the predictor using a dedicated calibration set.
 
         This method computes nonconformity scores for the calibration data and
         sorts them to determine thresholds for future predictions.
 
+
         .. note::
             If called without arguments, it recalculates the calibration scores
-            using the currently set penalty weights on the existing calibration data.
+            using the current distance measure and set penalty weights on the existing calibration data.
 
 
         Parameters
@@ -386,53 +527,98 @@ class InductiveConformalPredictor:
         Raises
         ------
         RuntimeError
-            If one of `probabilities` or `labels` is provided but not the other.
+            If one of ``probabilities`` or ``labels`` is provided but not the other.
         RuntimeError
-            If `labels` shape does not match the number of classes.
+            If the provided calibration set is empty.
         RuntimeError
-            If `probabilities` shape does not match the number of classes.
+            If ``labels`` shape does not match the number of classes.
+        RuntimeError
+            If ``probabilities`` shape does not match the number of classes.
 
 
         Example
         --------
-        >>> # 1. Generate dummy calibration data (25 samples, 5 classes)
-        >>> calib_probs = torch.rand(25, 5)
-        >>> calib_labels = torch.randint(0, 2, (25, 3)).float()
+        >>> # 1. Generate dummy calibration data (100 samples, 5 classes)
+        >>> calib_probs = torch.rand(100, 5)
+        >>> calib_labels = torch.randint(0, 2, (100, 5)).float()
         >>>
         >>> # 2. Calibrate
         >>> icp.calibrate(calib_probs, calib_labels)
 
 
-        Example
-        --------
-        >>> # Optional: The `calibrate` method recalculates calibration scores after weight update.
-        >>> icp.weight_hamming = 1.0
-        >>> icp.weight_cardinality = 0.5
-        >>> icp.calibrate()
+        .. note::
+            Update the distance measure and penalty weights before calling ``calibrate()``.
+
+            >>> # Optional: The `calibrate()` method recalculates the distance matrix and scores after a measure update.
+            >>> icp.measure = 'norm'
+            >>> icp.calibrate()
+
+
+            >>> # Optional: The `calibrate()` method recalculates calibration scores after penalty weight update.
+            >>> icp.weight_hamming = 1.0
+            >>> icp.weight_cardinality = 0.5
+            >>> icp.calibrate()
+
+
+            >>> # Optional: The `calibrate()` method applies both distance measure and penalty weight updates at once.
+            >>> icp.measure = 'norm'
+            >>> icp.weight_hamming = 1.0
+            >>> icp.weight_cardinality = 0.5
+            >>> icp.calibrate()
         """
 
-        if probabilities is not None and labels is not None:
-            labels = _check_multihot_labels(labels)
-            labels = _is_tensor(labels).to(self.device)
-            if labels.shape[1] != self.n_classes:
-                raise RuntimeError("Labels must have the same number of columns as the number of classes.")
+        recalculate_distance_scores = False
 
-            probabilities = _is_tensor(probabilities).to(self.device)
-            if probabilities.shape[1] != self.n_classes:
+        if getattr(self, '_update_measure', False):
+            if self.proper_train_probabilities is None or self.proper_train_labels is None:
+                raise RuntimeError("Cannot recalculate distance matrix: Proper training data is missing.")
+
+            print("Applying measure update and recalculating covariance matrix...")
+            self.covariance_matrix_preprocessing(self.proper_train_probabilities, self.proper_train_labels)
+            self._update_measure = False
+            recalculate_distance_scores = True
+
+
+        if probabilities is not None and labels is not None:
+            if torch.is_tensor(probabilities):
+                self.calib_probabilities = probabilities.detach().clone().to(self.device)
+            else:
+                self.calib_probabilities = _is_tensor(probabilities).to(self.device)
+
+            if torch.is_tensor(labels):
+                self.calib_labels = labels.detach().clone().to(self.device)
+            else:
+                self.calib_labels = _is_tensor(_check_multihot_labels(labels)).to(self.device)
+
+
+            if self.calib_probabilities.shape[1] != self.n_classes:
                 raise RuntimeError("Calibration labels and probabilities must have the same number of columns.")
 
-            if probabilities.ndim == 1:
-                probabilities = probabilities.unsqueeze(0)
+            if self.calib_labels.shape[0] == 0:
+                raise RuntimeError("Calibration set cannot be empty.")
 
-            errors = torch.abs(probabilities - labels)
-            mahalanobis_scores = torch.sqrt(torch.sum((errors @ self._inverse_covariance_matrix) * errors, dim=1))
-            self._calib_normalized_scores = mahalanobis_scores / self._mahalanobis_max_score
+            if self.calib_labels.shape[1] != self.n_classes:
+                raise RuntimeError("Labels must have the same number of columns as the number of classes.")
 
-            powers_desc = 2 ** torch.arange(labels.shape[1] - 1, -1, -1, device=self.device)
-            self._calib_indices = (labels * powers_desc).sum(dim=1).long()
-
+            recalculate_distance_scores = True
         elif (probabilities is None) != (labels is None):
-            raise RuntimeError("Both 'probabilities' and 'labels' must be provided for calibration, or neither.")
+            raise RuntimeError("Both 'probabilities' and 'labels' must be provided for calibration.")
+        elif self.calib_probabilities is None or self.calib_labels is None:
+            raise RuntimeError("No calibration data is cached. Please provide probabilities and labels.")
+
+        if recalculate_distance_scores:
+            if self.calib_probabilities.ndim == 1:
+                probs = self.calib_probabilities.unsqueeze(0)
+            else:
+                probs = self.calib_probabilities
+
+            errors = torch.abs(probs - self.calib_labels)
+            distance_scores = torch.sqrt(torch.sum((errors @ self._distance_matrix) * errors, dim=1))
+            self._calib_normalized_scores = distance_scores / self._max_distance_score
+
+            powers_desc = 2 ** torch.arange(self.calib_labels.shape[1] - 1, -1, -1, device=self.device)
+            self._calib_indices = (self.calib_labels * powers_desc).sum(dim=1).long()
+
 
         self._update_calibration_scores()
 
@@ -459,18 +645,35 @@ class InductiveConformalPredictor:
             Shape: (2^(c_classes))
         """
 
-        # probabilities = _is_tensor(probabilities).to(self.device)
         if probabilities.ndim == 1:
             probabilities = probabilities.unsqueeze(0)
 
-        errors = torch.abs(probabilities - self.combinations.float())
+        probs_expanded = probabilities.unsqueeze(1)
 
-        mahalanobis_scores = torch.sqrt(torch.sum((errors @ self._inverse_covariance_matrix) * errors, dim=1))
-        normalized_scores = mahalanobis_scores / self._mahalanobis_max_score
+        n_samples = probabilities.shape[0]
 
-        return normalized_scores + \
-            (self.weight_hamming * self._hamming_penalties) + \
-            (self.weight_cardinality * self._cardinality_penalties)
+        max_combs = constants._GPU_MAX_COMBINATIONS if str(self.device).startswith('cuda') else constants._CPU_MAX_COMBINATIONS
+        chunk_size = max(1, max_combs // n_samples)
+
+        all_scores_list = []
+
+        for i in range(0, self.combinations.shape[0], chunk_size):
+            combs_chunk = self.combinations[i: i + chunk_size].float().to(self.device).unsqueeze(0)
+            errors = torch.abs(probs_expanded - combs_chunk)
+            distance_scores = torch.sqrt(torch.sum((errors @ self._distance_matrix) * errors, dim=-1))
+            normalized_scores = distance_scores / self._max_distance_score
+
+            hamming_chunk = self._hamming_penalties[i: i + chunk_size]
+            cardinality_chunk = self._cardinality_penalties[i: i + chunk_size]
+
+            chunk_scores = normalized_scores + \
+                           (self.weight_hamming * hamming_chunk) + \
+                           (self.weight_cardinality * cardinality_chunk)
+
+            all_scores_list.append(chunk_scores)
+            del combs_chunk, errors, distance_scores, normalized_scores, chunk_scores
+
+        return torch.cat(all_scores_list, dim=1)
 
 
     @torch.no_grad()
@@ -484,7 +687,7 @@ class InductiveConformalPredictor:
 
         Parameters
         ----------
-        probabilities : torch.Tensor
+        probabilities : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
             Predicted probabilities for the test set.
             Shape: (t_samples, c_classes).
 
@@ -498,22 +701,54 @@ class InductiveConformalPredictor:
         Raises
         ------
         RuntimeError
-            If `calibrate` has not been called before `predict`.
+            If a distance measure was changed, but no
+            calibration data is cached to perform the auto-recalculation.
         RuntimeError
-            If `probabilities` shape does not match the number of classes.
+            If ``calibrate()`` has not been called before ``predict()``.
+        RuntimeError
+            If ``probabilities`` shape does not match the number of classes.
 
 
         Example
         --------
         >>> # Generate dummy test probabilities
-        >>> test_probs = torch.rand(10, 5)
+        >>> test_probs = torch.rand(30, 5)
         >>>
         >>> # Get prediction regions object
         >>> prediction_obj = icp.predict(test_probs)
         >>>
         >>> # Extract prediction sets for significance level 0.1 (90% confidence)
         >>> prediction_sets = prediction_obj(significance_level=0.1)
+
+        .. note::
+            **Equivalent Syntax**: Because the predictor itself is callable and it returns a callable
+            ``PredictionRegions`` object, you can chain the operations to extract prediction sets in a single line of code:
+
+            >>> prediction_sets = icp.predict(test_probs)(significance_level=0.1)
+
+
+        .. note::
+            Update distance measure and penalty weights on-the-fly and predict again. The predictor will automatically
+            apply the pending updates and recalibrate the scores before generating the new predictions.
+
+            >>> icp.measure = 'norm'
+            >>> icp.weight_hamming = 1.0
+            >>> icp.weight_cardinality = 0.5
+            >>> new_prediction_obj = icp.predict(test_probs)
+            >>> new_prediction_sets = new_prediction_obj(significance_level=0.1)
+
         """
+
+        if getattr(self, '_update_measure', False):
+            if getattr(self, 'calib_probabilities', None) is not None and getattr(self, 'calib_labels',
+                                                                                  None) is not None:
+                self.calibrate()
+            else:
+                raise RuntimeError(
+                    "Measure changed but no calibration data is cached. Please call calibrate() manually.")
+
+        elif self._update_weight_hamming or self._update_weight_cardinality:
+            self._update_calibration_scores()
 
         if self.sorted_calibration_scores is None:
             raise RuntimeError("Model is not calibrated.")
@@ -522,24 +757,35 @@ class InductiveConformalPredictor:
         if probabilities.shape[1] != self.n_classes:
             raise RuntimeError("Test set probabilities must have the same number of columns as the number of classes.")
 
-        if self._update_weight_hamming or self._update_weight_cardinality:
-            self._update_calibration_scores()
-
         cal_scores_ascending = torch.flip(self.sorted_calibration_scores.to(self.device), dims=[0])
         n_cal = len(cal_scores_ascending)
 
-        all_scores_list = []
-        for i in range(len(probabilities)):
-            scores = self.all_combinations_scoring(probabilities[i])
-            all_scores_list.append(scores)
-        all_combinations_scores = torch.stack(all_scores_list)
+        max_combs = constants._GPU_MAX_COMBINATIONS if str(self.device).startswith('cuda') else constants._CPU_MAX_COMBINATIONS
+        batch_size = max(1, max_combs // self.combinations.shape[0])
 
-        flat_scores = all_combinations_scores.view(-1)
-        indices = torch.searchsorted(cal_scores_ascending, flat_scores, side='left')
-        n_greater_equal = n_cal - indices
-        p_values_flat = (n_greater_equal + 1).float() / (n_cal + 1)
-        p_values = p_values_flat.view(all_combinations_scores.shape)
+        p_values_list = []
+        for i in tqdm(range(0, len(probabilities), batch_size), desc="Predicting"):
+            batch_probs = probabilities[i: i + batch_size]
+            batch_scores = self.all_combinations_scoring(batch_probs)
 
-        return PredictionRegions(p_values, self.combinations)
+            flat_scores = batch_scores.view(-1)
+            indices = torch.searchsorted(cal_scores_ascending, flat_scores, side='left')
+
+            indices.neg_()
+            indices.add_(n_cal + 1)
+
+            batch_p_values_flat = indices.float()
+            batch_p_values_flat.div_(n_cal + 1)
+            batch_p_values = batch_p_values_flat.view(batch_scores.shape)
+            p_values_list.append(batch_p_values.cpu().clone())
+
+            del batch_scores, flat_scores, indices, batch_p_values_flat, batch_p_values
+
+        final_p_values = torch.cat(p_values_list, dim=0)
+
+        if torch.cuda.is_available() and constants._EMPTY_CUDA_CACHE:
+            torch.cuda.empty_cache()
+
+        return PredictionRegions(final_p_values, self.combinations)
 
     __call__ = predict

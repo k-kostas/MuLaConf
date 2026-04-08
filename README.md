@@ -4,13 +4,13 @@
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/bsd-3-clause)
 
 A flexible Python package for **Conformal Prediction (CP)** in **Multi-label** classification settings.
-It implements the **Powerset Scoring** approach [[3]](#papadopoulos2014) using the **Mahalanobis 
-nonconformity measure** [[1]](#katsios2024), and applies **Structural Penalties** to provide more informative prediction sets, based on 
-Hamming distance and label-set cardinality [[2]](#katsios2025). Designed for efficiency, it handles 
-model training, calibration, and the update of structural penalty weights without the need for 
-retraining. This package bridges **Scikit-Learn** (for the underlying classifiers) and **PyTorch** 
-(for efficient tensor computations and GPU acceleration).
-
+It implements the **Powerset Scoring** approach [[3]](#papadopoulos2014) using both the **Mahalanobis** 
+distance [[1]](#katsios2024) and the standard **Euclidean Norm** [[4]](#maltou2022) as nonconformity measures, and applies
+**Structural Penalties** to provide more informative prediction sets, based on Hamming distance
+and label-set cardinality [[2]](#katsios2025). Designed for efficiency, it handles model training, calibration, 
+and the on-the-fly update of structural penalty weights or distance measures without the need
+for model retraining. This package bridges **Scikit-Learn** (for the underlying classifiers)
+and **PyTorch** (for efficient tensor computations and GPU acceleration).
 
 Table of Contents
 - [Key Features](#key-features)
@@ -27,10 +27,11 @@ Table of Contents
 
 * **Multi-label Conformal Prediction**: Provides sets of label-sets with guaranteed coverage under the assumption of data exchangeability.
 * **Powerset Scoring**: Explicitly assigns p-values to all possible label-sets.
+* **Distance Measures**: Supports both the **Mahalanobis** distance and the standard **Euclidean Norm** in the error vector space.
 * **Mahalanobis Nonconformity Measure**: Utilizes the Mahalanobis distance in the error vectors space to account for label correlations.
 * **Structural Penalties**: Incorporates Hamming and Cardinality penalties to produce more informative prediction sets.
 * **Post-training Penalty Updates**: Modify penalty weights after fitting, with no need to retrain the model or recalculate the covariance matrix.
-* **Automatic Classifier Switching**: Replace the underlying classifier (e.g., from `RandomForestClassifier` to `KNeighborsClassifier`) and let the wrapper handles retraining automatically.
+* **Automatic Classifier Switching**: Replace the underlying classifier (e.g., from `RandomForestClassifier` to `KNeighborsClassifier`) and the wrapper handles retraining automatically.
 * **Compatible with any model**: Provides a wrapper (ICPWrapper) for any sklearn multi-label classifier (e.g., `MultiOutputClassifier`, `ClassifierChain`) plus a model agnostic InductiveConformalPredictor.
 * **GPU Support**: Offloads heavy matrix computations to CUDA devices.
 
@@ -87,8 +88,9 @@ Data shapes: Train=(1522, 103), Calib=(653, 103), Test=(242, 103)
 
 We initialize the underlying classifier from Scikit-Learn before fitting it on the proper training data. We have
 chosen the `RandomForestClassifier` here, wrapped by `MultiOutputClassifier`. Then, we initialize the ICPWrapper
-setting the model and the weights of the structural penalties (default values are 0.0). Notice that there are two ways
-to adjust the classifiers' arguments either by passing them directly
+setting the model, the distance measure (default is `mahalanobis`) and the weights of the structural penalties
+(default values are `0.0`). Notice that there are two ways to adjust the classifiers' arguments 
+either by passing them directly
 
 ```python
 from sklearn.ensemble import RandomForestClassifier
@@ -97,7 +99,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from mulaconf.icp_wrapper import ICPWrapper
 
 base_model = MultiOutputClassifier(RandomForestClassifier(n_estimators=10))
-wrapper = ICPWrapper(base_model, weight_hamming=2.0, weight_cardinality=1.5, device='cpu')
+wrapper = ICPWrapper(base_model, measure='mahalanobis', weight_hamming=2.0, weight_cardinality=1.5, device='cpu')
 wrapper.fit(X_train, y_train)
 ```
 
@@ -107,11 +109,11 @@ or as a dictionary.
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.multioutput import MultiOutputClassifier
 
-from structural_penalties_icp.icp_wrapper import ICPWrapper
+from mulaconf.icp_wrapper import ICPWrapper
 
 base_model = MultiOutputClassifier(RandomForestClassifier())
-wrapper = ICPWrapper(base_model, weight_hamming=2.0, weight_cardinality=1.5, device='cpu')
-args = {'estimator__n_estimators': 5}
+wrapper = ICPWrapper(base_model, measure='mahalanobis', weight_hamming=2.0, weight_cardinality=1.5, device='cpu')
+args = {'estimator__n_estimators': 10}
 wrapper.fit(X_train, y_train, **args)
 ```
 
@@ -137,6 +139,21 @@ wrapper.calibrate(X_calib, y_calib)
 > # Trigger automatic retraining and calibration
 > wrapper.calibrate(X_calib, y_calib)
 > ```
+
+
+> [!NOTE]
+> **On-the-fly Updates**: You can easily update the distance measure and penalty weights after the calibration
+> process without passing your data again. Calling `calibrate()` without arguments will automatically
+> apply all pending updates simultaneously using the cached calibration data.
+>
+> ```python
+> wrapper.measure = 'norm'
+> wrapper.weight_hamming = 1.0
+> wrapper.weight_cardinality = 0.5
+> wrapper.calibrate()
+> ```
+
+
 
 Finally, we generate prediction regions for the test set using the predict method.
 
@@ -172,16 +189,25 @@ Equivalent one-liner:
 prediction_sets = wrapper.predict(X_test)(significance_level=0.1)
 ```
 
-> [!NOTE]
-> **Penalty Weights Update**: We update the penalty weights on-the-fly without retraining the model.
->
+
+> [!NOTE]  
+> **On-the-Fly Updates**:
+> You can update the distance measure and structural penalty weights after the prediction process
+> The predictor automatically reconstructs the covariance matrix and recalibrates the conformal scores
+> internally. You do not need to retrain the underlying classifier or pass your calibration data again.
+> Simply assign the new parameters and call `predict()` again.
+> 
 > ```python
-> wrapper.icp.weight_hamming = 1.5
+> # Update parameters directly via the wrapper
+> wrapper.icp.measure = 'norm'
+> wrapper.icp.weight_hamming = 1.0
 > wrapper.icp.weight_cardinality = 0.5
->
-> # Predict with new penalties
-> updated_prediction_sets = wrapper.predict(X_test)(significance_level=0.1)
->```
+> 
+> # Recalibration happens automatically on the fly, so you can call the predict() method immediately.
+> updated_obj = wrapper.predict(X_test)
+> updated_prediction_sets = updated_obj(significance_level=0.1)
+> ```
+
 
 > [!NOTE]
 > **Accessing P-Values**: You also have direct access to the raw p-values for every possible label combination.
@@ -232,7 +258,7 @@ print(metrics)
 
 
 ## Alternative usage
-You can also use the InductiveConformalPredictor class as a standalone engine if you prefer to manage the underlying
+You can also use the InductiveConformalPredictor class as a standalone package if you prefer to manage the underlying
 classifier yourself or not using Scikit-Learn. In this mode, you must provide the **predicted probabilities** for the
 proper training, calibration, and test sets, as well as the **ground truth labels** for the training and calibration sets.
 
@@ -241,7 +267,7 @@ or lists. All data is automatically converted to tensors and moved to the specif
 efficient processing.
 
 First, we need to initialize the InductiveConformalPredictor class to calculate the structural penalties and to form
-the covariance matrix using the proper training data.
+the covariance matrix using the error vectors.
 
 ```python
 from mulaconf.icp_predictor import InductiveConformalPredictor
@@ -249,6 +275,7 @@ from mulaconf.icp_predictor import InductiveConformalPredictor
 icp = InductiveConformalPredictor(
     predicted_probabilities=train_probs,
     true_labels=train_labels,
+    measure='mahalanobis',
     weight_hamming=1.5,
     weight_cardinality=0.5,
     device='cpu'
@@ -329,15 +356,22 @@ print(metrics)
  }
 ```
 
-> [!NOTE]
-> **Penalties Weights Update**: We update the penalty weights on-the-fly without retraining the model.
->
+> [!NOTE]  
+> **On-the-Fly Updates**: 
+> You can update the distance measure and structural penalty weights
+> at any time. The predictor automatically reconstructs the covariance matrix and recalibrates the conformal scores
+> internally. You do not need to retrain the underlying classifier or pass your calibration data again.
+> Assign the new parameters and call `predict()` again.
+> 
 > ```python
-> wrapper.icp.weight_hamming = 1.5
-> wrapper.icp.weight_cardinality = 0.5
->
-> # Predict with new penalties
-> updated_prediction_sets = wrapper.predict(X_test)(significance_level=0.1)
+> # Update parameters directly
+> icp.measure = 'norm'
+> icp.weight_hamming = 1.0
+> icp.weight_cardinality = 0.5
+> 
+> # Recalibration happens automatically on the fly, so you can call the predict() method immediately.
+> updated_obj = predict(test_probs)
+> updated_prediction_sets = updated_obj(significance_level=0.1)
 > ```
 
 
@@ -378,9 +412,9 @@ If you use the package for a scientific publication, you are kindly requested to
 
 3. <a id="papadopoulos2014"></a>Papadopoulos, H. (2014). A cross-conformal predictor for multi-label classification. In *Artificial Intelligence Applications and Innovations: AIAI 2014 Workshops: CoPA, MHDW, IIVC, and MT4BD, Rhodes, Greece, September 19-21, 2014. Proceedings 10* (pp. 241–250). Springer. [DOI: 10.1007/978-3-662-44722-2_26](https://doi.org/10.1007/978-3-662-44722-2_26)
 
-4. <a id="lambrou2016"></a>Lambrou, A., & Papadopoulos, H. (2016). Binary relevance multi-label conformal predictor. In *Conformal and Probabilistic Prediction with Applications* (pp. 90–104). Springer. [DOI: 10.1007/978-3-319-33395-3_7](https://doi.org/10.1007/978-3-319-33395-3_7)
+4. <a id="maltou2022"></a>Maltoudoglou, L., Paisios, A., Lenc, L., Martı́nek, J., Král, P., & Papadopoulos, H. (2022). Well-calibrated confidence measures for multi-label text classification with a large number of labels. *Pattern Recognition*, 122, 108271. [DOI: 10.1016/j.patcog.2021.108271](https://doi.org/10.1016/j.patcog.2021.108271)
 
-5. <a id="maltou2022"></a>Maltoudoglou, L., Paisios, A., Lenc, L., Martı́nek, J., Král, P., & Papadopoulos, H. (2022). Well-calibrated confidence measures for multi-label text classification with a large number of labels. *Pattern Recognition*, 122, 108271. [DOI: 10.1016/j.patcog.2021.108271](https://doi.org/10.1016/j.patcog.2021.108271)
+5. <a id="lambrou2016"></a>Lambrou, A., & Papadopoulos, H. (2016). Binary relevance multi-label conformal predictor. In *Conformal and Probabilistic Prediction with Applications* (pp. 90–104). Springer. [DOI: 10.1007/978-3-319-33395-3_7](https://doi.org/10.1007/978-3-319-33395-3_7)
 
 6. <a id="papadopoulos2002a"></a>Papadopoulos, H., Proedrou, K., Vovk, V., & Gammerman, A. (2002a). Inductive confidence machines for regression. In *Machine learning: ECML 2002: 13th European conference on machine learning Helsinki, Finland, August 19–23, 2002 proceedings 13* (pp. 345–356). Springer. [DOI: 10.1007/3-540-36755-1_29](https://doi.org/10.1007/3-540-36755-1_29)
 

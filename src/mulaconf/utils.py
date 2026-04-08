@@ -2,8 +2,9 @@ import numpy as np
 import pandas as pd
 import torch
 import warnings
-import pickle
 import hashlib
+import json
+
 
 from typing import Union
 
@@ -99,29 +100,43 @@ def _normalize_device(dev: Union[torch.device, str, None]) -> torch.device:
     return dev
 
 
-def _fingerprint_model(model, params) -> str:
-    h = hashlib.sha1()
+def _fingerprint_model(strategy, kwargs):
+    """
+    Create a deterministic fingerprint based on model class and hyperparameters only.
+    """
 
-    if params:
-        for k, v in sorted(params.items()):
-            h.update(str(k).encode())
-            h.update(repr(v).encode())
+    class SklearnEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, np.generic):
+                return obj.item()
+            if callable(obj):
+                return getattr(obj, '__name__', str(type(obj).__name__))
+            return super().default(obj)
+
+    def get_stable_params(estimator):
+        """Extract only configuration params, not fitted state."""
+        if not hasattr(estimator, 'get_params'):
+            return {'__class__': type(estimator).__name__}
+
+        params = {}
+        for key, value in estimator.get_params(deep=False).items():
+            if hasattr(value, 'get_params'):
+                params[key] = get_stable_params(value)
+            else:
+                params[key] = value
+
+        return {'__class__': type(estimator).__name__, '__params__': params}
+
+    fingerprint_data = {
+        'model': get_stable_params(strategy),
+        'kwargs': kwargs
+    }
+
     try:
-        if hasattr(model, "state_dict"):
-            for name, t in model.state_dict().items():
-                h.update(name.encode())
-                if torch.is_tensor(t):
-                    h.update(t.detach().cpu().numpy().tobytes())
-                else:
-                    h.update(str(t).encode())
-        else:
-            try:
-                model_bytes = pickle.dumps(model)
-                h.update(model_bytes)
-            except (AttributeError, TypeError, pickle.PicklingError):
-                h.update(str(model).encode())
-
+        fingerprint_str = json.dumps(fingerprint_data, sort_keys=True, cls=SklearnEncoder)
     except Exception:
-        return "unknown"
+        fingerprint_str = str(fingerprint_data)
 
-    return h.hexdigest()
+    return hashlib.sha256(fingerprint_str.encode()).hexdigest()

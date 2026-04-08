@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mulaconf"
-version = "0.1.0"
+version = "0.2.0"
 authors = [
   { name="Kostas Katsios", email="kos.katsios@gmail.com" },
 ]
@@ -15,6 +15,7 @@ keywords = ["conformal prediction", "multi-label", "classification", "uncertaint
 license = {file = "LICENSE"}
 dependencies = [
     "numpy>=1.20.0",
+    "scipy>=1.7.0",
     "scikit-learn>=1.0.0",
     "torch>=2.0.0",
     "pandas>=2.0.0",
@@ -23,8 +24,14 @@ dependencies = [
 
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence"
 ]
 
 [project.urls]

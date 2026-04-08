@@ -17,11 +17,11 @@ References
 
 .. _ref-4:
 
-**[4]** Lambrou, A., & Papadopoulos, H. (2016). Binary relevance multi-label conformal predictor. In *Conformal and Probabilistic Prediction with Applications* (pp. 90–104). Springer. `DOI: 10.1007/978-3-319-33395-3_7 <https://doi.org/10.1007/978-3-319-33395-3_7>`_
+**[4]** Maltoudoglou, L., Paisios, A., Lenc, L., Martı́nek, J., Král, P., & Papadopoulos, H. (2022). Well-calibrated confidence measures for multi-label text classification with a large number of labels. *Pattern Recognition*, 122, 108271. `DOI: 10.1016/j.patcog.2021.108271 <https://doi.org/10.1016/j.patcog.2021.108271>`_
 
 .. _ref-5:
 
-**[5]** Maltoudoglou, L., Paisios, A., Lenc, L., Martı́nek, J., Král, P., & Papadopoulos, H. (2022). Well-calibrated confidence measures for multi-label text classification with a large number of labels. *Pattern Recognition*, 122, 108271. `DOI: 10.1016/j.patcog.2021.108271 <https://doi.org/10.1016/j.patcog.2021.108271>`_
+**[5]** Lambrou, A., & Papadopoulos, H. (2016). Binary relevance multi-label conformal predictor. In *Conformal and Probabilistic Prediction with Applications* (pp. 90–104). Springer. `DOI: 10.1007/978-3-319-33395-3_7 <https://doi.org/10.1007/978-3-319-33395-3_7>`_
 
 .. _ref-6:
 

@@ -4,7 +4,7 @@ import sys
 project = 'MuLaConf'
 copyright = '2026, Kostas Katsios'
 author = 'Kostas Katsios'
-release = '0.1.0'
+release = '0.2.0'
 
 extensions = [  'sphinx.ext.autodoc',
                 'sphinx.ext.napoleon',
@@ -27,10 +27,12 @@ sys.path.insert(0, os.path.abspath('../../src'))
 
 autodoc_member_order = 'bysource'
 
+autodoc_mock_imports = ["torch", "scipy", "numpy", "pandas", "sklearn"]
+
 copybutton_prompt_text = r">>> ?|\.\.\. ?"
 copybutton_prompt_is_regexp = True
 
-html_title = 'MuLaConf v. 0.1.0'
+html_title = 'MuLaConf v. 0.2.0'
 
 html_sidebars = {
     "**": []
