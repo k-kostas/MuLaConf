@@ -4,6 +4,8 @@ import torch
 from tqdm import tqdm
 from typing import Union
 
+from sklearn.covariance import ledoit_wolf
+
 from .prediction_regions import PredictionRegions
 from .utils import _check_multihot_labels, _is_tensor, _normalize_device
 from . import constants
@@ -453,19 +455,22 @@ class InductiveConformalPredictor:
             )
 
         errors = torch.abs(probabilities - labels)
-        covariance_matrix = torch.cov(errors.T)
-        eigvalues, eigvectors = torch.linalg.eig(covariance_matrix)
-        eigvalues_real = eigvalues.real
-        eigvalues_real[eigvalues_real <= 0] = 1e-32
+        errors_np = errors.cpu().numpy()
+        shrunk_cov_np, _ = ledoit_wolf(errors_np)
 
-        diagonal_covariance_matrix_power = torch.diag(eigvalues_real.pow(self.matrix_power_parameter))
+        covariance_matrix = torch.tensor(shrunk_cov_np, device=self.device)
+        eigvalues, eigvectors = torch.linalg.eig(covariance_matrix)
+
+        diagonal_covariance_matrix_power = torch.diag(eigvalues.real.pow(self.matrix_power_parameter))
 
         self._distance_matrix = (
                 eigvectors.real @ diagonal_covariance_matrix_power @ eigvectors.real.T
         ).to(device=self.device)
 
+        distance_matrix_abs = torch.abs(self._distance_matrix).to(device=self.device)
         ones = torch.ones(self.n_classes, device=self.device)
-        self._max_distance_score = torch.sqrt(ones @ self._distance_matrix @ ones).to(device=self.device)
+        self._max_distance_score = torch.sqrt(ones @ distance_matrix_abs @ ones).to(device=self.device)
+
         print(f"Distance matrix calculated (Measure: {self._measure}) with shape:", self._distance_matrix.shape)
 
 
