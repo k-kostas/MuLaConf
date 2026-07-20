@@ -458,7 +458,7 @@ class InductiveConformalPredictor:
         errors_np = errors.cpu().numpy()
         shrunk_cov_np, _ = ledoit_wolf(errors_np)
 
-        covariance_matrix = torch.tensor(shrunk_cov_np, device=self.device)
+        covariance_matrix = torch.tensor(shrunk_cov_np, dtype=torch.float32, device=self.device)
         eigvalues, eigvectors = torch.linalg.eig(covariance_matrix)
 
         diagonal_covariance_matrix_power = torch.diag(eigvalues.real.pow(self.matrix_power_parameter))
@@ -791,6 +791,6 @@ class InductiveConformalPredictor:
         if torch.cuda.is_available() and constants._EMPTY_CUDA_CACHE:
             torch.cuda.empty_cache()
 
-        return PredictionRegions(final_p_values, self.combinations)
+        return PredictionRegions(final_p_values, self.combinations, non_empty_prediction_regions=True)
 
     __call__ = predict
