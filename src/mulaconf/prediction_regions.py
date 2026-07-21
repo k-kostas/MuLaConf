@@ -5,7 +5,6 @@ import warnings
 
 from tqdm import tqdm
 from typing import Tuple, List, Dict, Union, Optional
-from scipy.stats import kstest
 
 from .utils import _check_multihot_labels, _is_tensor
 from . import constants
@@ -33,6 +32,8 @@ class PredictionRegions:
     combinations : torch.Tensor
         The matrix of all possible label combinations corresponding to the columns of `p_values`.
         Shape: (2^(c_classes), c_classes).
+    non_empty_prediction_regions : bool, optional
+        If True (default), the combination with the highest p-value is returned to ensure non-empty predictions.
 
 
     Example
@@ -48,10 +49,12 @@ class PredictionRegions:
     >>> prediction_regions_obj = PredictionRegions(p_values, combinations)
     """
 
-    def __init__(self, p_values: torch.Tensor, combinations: torch.Tensor):
+    def __init__(self, p_values: torch.Tensor, combinations: torch.Tensor, non_empty_prediction_regions=True):
         self.device = p_values.device
         self.p_values = p_values
         self.combinations = combinations.to(self.device)
+        self.non_empty_prediction_regions = non_empty_prediction_regions
+        self.valid_tuples_size = None
 
 
     def get_valid_tuples(self, alpha: float) -> List[torch.Tensor]:
@@ -72,9 +75,6 @@ class PredictionRegions:
         List[torch.Tensor]
             A list where each element corresponds to a test sample. Each element is a Tensor
             containing the valid label combinations for that sample.
-
-            - If `row_counts` is 0 (empty set), the combination with the highest p-value is returned
-              to ensure non-empty predictions.
         """
 
         all_valid_tuples = []
@@ -87,33 +87,38 @@ class PredictionRegions:
 
             mask = batch_p_values > alpha
             row_counts = mask.sum(dim=1)
-            empty_mask = (row_counts == 0)
 
-            if empty_mask.any():
-                max_indices = batch_p_values.argmax(dim=1)
-                mask[empty_mask, max_indices[empty_mask]] = True
-                row_counts[empty_mask] = 1
+            if self.non_empty_prediction_regions:
+                empty_mask = (row_counts == 0)
+
+                if empty_mask.any():
+                    max_indices = batch_p_values.argmax(dim=1)
+                    mask[empty_mask, max_indices[empty_mask]] = True
+                    row_counts[empty_mask] = 1
+
+                del empty_mask
 
             valid_indices = mask.nonzero()
             comb_indices = valid_indices[:, 1]
-            flat_predictions = self.combinations[comb_indices]
 
+            flat_predictions = self.combinations[comb_indices]
             chunk_tuples = list(torch.split(flat_predictions.int(), row_counts.cpu().tolist()))
             all_valid_tuples.extend(chunk_tuples)
+            self.valid_tuples_size = len(all_valid_tuples)
 
-            del batch_p_values, mask, row_counts, empty_mask, valid_indices, comb_indices, flat_predictions
+            del batch_p_values, mask, row_counts, valid_indices, comb_indices, flat_predictions
 
         return all_valid_tuples
 
 
-    def _get_true_label_p_values(self, true_labelsets: torch.Tensor) -> torch.Tensor:
+    def _get_true_labelsets_p_values_and_indices(self, true_labelsets: torch.Tensor) -> torch.Tensor:
         """
-        Retrieves the p-values assigned to the actual ground truth labels.
+        Retrieves the exact column indices of the actual ground truth label combinations.
 
 
         Parameters
         ----------
-        true_label : torch.Tensor
+        true_labelsets : torch.Tensor
             The ground truth labels for the test samples.
             Shape: (t_samples, c_classes).
 
@@ -121,7 +126,7 @@ class PredictionRegions:
         Returns
         -------
         torch.Tensor
-            A 1D tensor of p-values corresponding to the true labels.
+            A 1D tensor of p-values and a 1D tensor of indices corresponding to the true labels.
             Shape: (t_samples).
         """
 
@@ -130,74 +135,14 @@ class PredictionRegions:
         n_samples = true_labelsets.shape[0]
 
         powers_of_two = 2 ** torch.arange(n_classes, device=device)
-
         comb_hashes = (self.combinations * powers_of_two).sum(dim=1)
         true_hashes = (true_labelsets * powers_of_two).sum(dim=1)
-
         sorted_comb_hashes, sorted_indices = torch.sort(comb_hashes)
         positions = torch.searchsorted(sorted_comb_hashes, true_hashes)
-
         positions = torch.clamp(positions, max=len(sorted_comb_hashes) - 1)
-        match_indices = sorted_indices[positions]
+        matched_indices = sorted_indices[positions]
 
-        return self.p_values[torch.arange(n_samples), match_indices]
-
-
-    def _check_ks_test(self, true_pvalues: torch.Tensor) -> Dict[str, float]:
-        """
-        Performs a Kolmogorov-Smirnov test.
-
-        Tests if the p-values of the true labels follow a Uniform(0, 1) distribution,
-        which is the theoretical guarantee of a perfectly calibrated Conformal Predictor.
-
-
-        .. note::
-           **Cap the evaluation at 1,000 samples**
-           In Conformal Prediction, p-values are calculated from a finite calibration set,
-           making them inherently discrete (they exist in steps of 1/(n_cal + 1)).
-           Because the KS-test evaluates against a perfectly continuous uniform distribution,
-           passing massive sample sizes (e.g., N > 10,000) gives the test excessive statistical
-           power. It will detect the valid, microscopic discrete gaps and falsely reject
-           the null hypothesis (the "Large N Problem"). Capping at 1,000 provides sufficient
-           power to detect severe miscalibration without triggering this discreteness paradox.
-
-           **Validity is set to 0.05**
-           Assume that the null hypothesis is that the distribution *is* perfectly uniform.
-           A resulting p-value > 0.05 means we fail to reject this
-           hypothesis, indicating the model's p-values are safely uniform and valid.
-
-
-        Parameters
-        ----------
-        true_p_values : torch.Tensor
-            The exact p-values corresponding to the ground truth labels.
-            Shape: (t_samples,).
-
-
-        Returns
-        -------
-        Dict[str, float]
-            A dictionary containing:
-            - 'ks_statistic': The KS statistic.
-            - 'ks_p_value': The p-value of the KS test (should be > 0.05 for validity).
-            - 'is_valid': Boolean indicating if the null hypothesis (uniformity) is not rejected.
-        """
-
-        if len(true_p_values) < 30:
-            warnings.warn(f"KS-Test running with only {len(true_p_values)} samples. Results may be unreliable.",
-                          RuntimeWarning)
-
-        if len(true_p_values) > 1_000:
-            true_p_values = np.random.choice(true_p_values, 1_000, replace=False)
-
-        true_p_values_np = true_p_values.detach().cpu().numpy()
-        ks_stat, ks_pval = kstest(true_p_values_np, 'uniform')
-
-        return {
-            "ks_statistic": ks_stat,
-            "ks_p_value": ks_pval,
-            "is_valid": ks_pval > 0.05
-        }
+        return self.p_values[torch.arange(n_samples), matched_indices], matched_indices
 
 
     def _parse_significance_level(
@@ -305,7 +250,8 @@ class PredictionRegions:
                  return_coverage: bool = True,
                  return_n_criterion: bool = True,
                  return_s_criterion: bool = True,
-                 return_ks_test: bool = True,
+                 return_observed_fuzziness: bool = True,
+                 return_observed_excess: bool = True,
                  *,
                  true_labelsets: Optional[Union[np.ndarray, torch.Tensor, pd.DataFrame, pd.Series, List]]=None,
                  significance_level: Optional[Union[float, List[float]]] = None,
@@ -313,7 +259,7 @@ class PredictionRegions:
         """
         Evaluates the conformal predictor using standard metrics.
 
-        Calculates validity (coverage, KS-test) and efficiency (N-criterion, S-criterion) metrics.
+        Calculates validity (coverage) and efficiency (N-criterion, S-criterion, Observed fuzziness, Observed excess) metrics.
 
 
         Parameters
@@ -325,13 +271,15 @@ class PredictionRegions:
         return_n_criterion : bool, default=True
             Whether to calculate average set size (N-criterion) (requires `true labelsets` and `significance_level`).
         return_s_criterion : bool, default=True
-            Whether to calculate the S-criterion (sum of p-values), a significance level independent efficiency metric.
-        return_ks_test : bool, default=True
-            Whether to perform the KS-test for uniformity (requires `true labelsets`).
+            Whether to calculate the S-criterion (sum of p-values), a threshold-independent efficiency metric.
+        return_observed_fuzziness : bool, default=True
+            Whether to calculate the observed fuzziness (requires `true labelsets`).
+        return_observed_excess : bool, default=True
+            Whether to calculate the observed excess (requires `true labelsets` and `significance_level`).
         true_labelsets : torch.Tensor or array-like, optional
             The ground truth labels. Required for coverage and p-value metrics.
         significance_level : float or List[float], optional
-            The significance level(s) to evaluate coverage and N-criterion (set size).
+            The alpha level(s) to evaluate coverage and N-criterion.
 
 
         .. note::
@@ -341,9 +289,20 @@ class PredictionRegions:
         Returns
         -------
         Dict
-            A dictionary containing the requested metrics. If ``significance_level`` is a list,
-            returns a dictionary where keys are alphas and values are metric dictionaries.
+            A dictionary containing the requested evaluation metrics.
 
+            Depending on the boolean flags provided, the returned dictionary will contain
+            the following specific string keys:
+            - ``'true_labels_p_values'`` : A 1D tensor of the exact p-values for the true labels.
+            - ``'coverage'`` : The empirical coverage (validity).
+            - ``'n_criterion'`` : The average prediction set size.
+            - ``'s_criterion'`` : The average sum of all p-values.
+            - ``'observed_fuzziness'`` : The average sum of the p-values of the false labels.
+            - ``'observed_excess'`` : The average sum of false labels included in the prediction region.
+
+            If ``significance_level`` is a list of multiple alphas, it returns a nested dictionary
+            where the top-level keys are the alpha values (floats), and the values are metric
+            dictionaries containing the keys listed above.
 
         Raises
         ------
@@ -371,7 +330,7 @@ class PredictionRegions:
         if true_labelsets is None:
             out = {}
             if return_s_criterion: out['s_criterion'] = self.p_values.sum(dim=1).mean().item()
-            if return_true_label_p_value or return_coverage or return_n_criterion or return_ks_test:
+            if return_true_label_p_value or return_coverage or return_n_criterion or return_observed_fuzziness or return_observed_excess:
                 warnings.warn("Missing true_labelsets. Only s_criterion calculated.", RuntimeWarning)
             return out
 
@@ -381,7 +340,7 @@ class PredictionRegions:
         if true_labelsets.shape[1] != self.combinations.shape[1]:
             raise ValueError("True labels must have the same number of columns as the number of classes.")
 
-        true_p_values = self._get_true_label_p_values(true_labelsets)
+        true_labelsets_p_values, true_labelsets_indices = self._get_true_labelsets_p_values_and_indices(true_labelsets)
 
 
         if significance_level is not None:
@@ -390,29 +349,50 @@ class PredictionRegions:
             def _evaluate_metrics(alpha):
                 out = {}
                 if return_true_label_p_value:
-                    out['true_labels_p_values'] = true_p_values
+                    out['true_labels_p_values'] = true_labelsets_p_values
 
                 if return_coverage:
-                    out['coverage'] = (true_p_values > alpha).float().mean().item()
+                    out['coverage'] = (true_labelsets_p_values > alpha).float().mean().item()
 
-                if return_n_criterion:
+                if return_n_criterion or return_observed_excess:
                     n_samples, n_combinations = self.p_values.shape
                     batch_size = max(1, constants._REGION_BATCH_SIZE // n_combinations)
                     total_sizes = 0
+                    total_excess = 0
 
                     for i in range(0, n_samples, batch_size):
-                        batch_p = self.p_values[i: i + batch_size]
-                        counts = (batch_p > alpha).sum(dim=1)
-                        counts[counts == 0] = 1
+                        batch_p_values = self.p_values[i: i + batch_size]
+                        batch_true_indices = true_labelsets_indices[i: i + batch_size]
+
+                        mask = batch_p_values > alpha
+                        counts = mask.sum(dim=1)
+
+                        if self.non_empty_prediction_regions:
+                            empty_mask = (counts == 0)
+                            if empty_mask.any():
+                                max_indices = batch_p_values.argmax(dim=1)
+                                mask[empty_mask, max_indices[empty_mask]] = True
+                                counts[empty_mask] = 1
+
                         total_sizes += counts.sum().item()
 
-                    out['n_criterion'] = total_sizes / n_samples
+                        if return_observed_excess:
+                            true_label_in_set = mask[torch.arange(len(batch_p_values)), batch_true_indices].int()
+                            excess = counts - true_label_in_set
+                            total_excess += excess.sum().item()
+
+                    if return_n_criterion:
+                        out['n_criterion'] = total_sizes / n_samples
+                    if return_observed_excess:
+                        out['observed_excess'] = total_excess / n_samples
 
                 if return_s_criterion:
                     out['s_criterion'] = self.p_values.sum(dim=1).mean().item()
 
-                if return_ks_test:
-                    out['ks_test_metrics'] = self._check_ks_test(true_p_values)
+                if return_observed_fuzziness:
+                    sum_p = self.p_values.sum(dim=1)
+                    of_vals = sum_p - true_labelsets_p_values
+                    out['observed_fuzziness'] = of_vals.mean().item()
 
                 return out
 
@@ -423,9 +403,8 @@ class PredictionRegions:
 
         else:
             out = {}
-            if return_true_label_p_value: out['true_labels_p_values'] = true_p_values
+            if return_true_label_p_value: out['true_labelsets_p_values'] = true_labelsets_p_values
             if return_s_criterion: out['s_criterion'] = self.p_values.sum(dim=1).mean().item()
-            if return_ks_test: out['ks_test_metrics'] = self._check_ks_test(true_p_values)
 
             if return_coverage or return_n_criterion:
                 warnings.warn("Coverage/N-criterion require a significance_level.", RuntimeWarning)
