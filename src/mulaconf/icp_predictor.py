@@ -685,7 +685,7 @@ class InductiveConformalPredictor:
 
 
     @torch.no_grad()
-    def predict(self, probabilities: InputData) -> PredictionRegions:
+    def predict(self, probabilities: InputData, non_empty_prediction_regions:bool = True) -> PredictionRegions:
         """
         Computes p-values for the test samples.
 
@@ -698,6 +698,9 @@ class InductiveConformalPredictor:
         probabilities : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
             Predicted probabilities for the test set.
             Shape: (t_samples, c_classes).
+        non_empty_prediction_regions : bool, optional
+            If True (default), the combination with the highest p-value is returned to ensure non-empty predictions.
+
 
         Returns
         -------
@@ -722,7 +725,7 @@ class InductiveConformalPredictor:
         >>> # Generate dummy test probabilities
         >>> test_probs = torch.rand(30, 5)
         >>>
-        >>> # Get prediction regions object
+        >>> # Get prediction regions object with non empty prediction regions
         >>> prediction_obj = icp.predict(test_probs)
         >>>
         >>> # Extract prediction sets for significance level 0.1 (90% confidence)
@@ -794,6 +797,6 @@ class InductiveConformalPredictor:
         if torch.cuda.is_available() and constants._EMPTY_CUDA_CACHE:
             torch.cuda.empty_cache()
 
-        return PredictionRegions(final_p_values, self.combinations, non_empty_prediction_regions=True)
+        return PredictionRegions(final_p_values, self.combinations, non_empty_prediction_regions)
 
     __call__ = predict
