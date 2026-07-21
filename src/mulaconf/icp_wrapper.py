@@ -487,7 +487,7 @@ class ICPWrapper:
         return self
 
 
-    def predict(self, test_features: InputData) -> PredictionRegions:
+    def predict(self, test_features: InputData, non_empty_prediction_regions:bool = True) -> PredictionRegions:
         """
         Generates conformal prediction regions for the input features.
 
@@ -497,11 +497,14 @@ class ICPWrapper:
         ----------
         test_features : array-like
             The test features. Shape: (t_samples, w_features).
+        non_empty_prediction_regions : bool, optional
+            If True (default), the combination with the highest p-value is returned to ensure non-empty predictions.
+
 
         Returns
         -------
         PredictionRegions
-            A callable object containing p-values. You must call this object
+            A callable object that returns prediction regions. You must call this object
             with a specific ``significance_level`` to retrieve the final prediction sets.
 
         Raises
@@ -519,8 +522,7 @@ class ICPWrapper:
         >>> # ... Assume wrapper is already fitted and calibrated (see fit() for details) ...
         >>> X_test = np.random.rand(10, 5)
         >>>
-        >>> # 1. Get the Prediction Container
-        >>> # This calculates p-values but doesn't apply a threshold yet.
+        >>> # 1. Get prediction regions object with non empty prediction regions
         >>> prediction_region_obj = wrapper.predict(X_test)
         >>>
         >>> # 2. Extract Prediction Sets (e.g., at 10% significance / 90% confidence)
@@ -568,4 +570,4 @@ class ICPWrapper:
         test_probabilities = self.predict_proba_to_tensor(test_features).to(self.device)
         print("---The object of PredictionRegions class is called.---\n")
 
-        return self.icp.predict(test_probabilities)
+        return self.icp.predict(test_probabilities, non_empty_prediction_regions)
