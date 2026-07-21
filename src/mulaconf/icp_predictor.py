@@ -4,14 +4,13 @@ import torch
 from tqdm import tqdm
 from typing import Union
 
-from sklearn.covariance import ledoit_wolf
-
 from .prediction_regions import PredictionRegions
 from .utils import _check_multihot_labels, _is_tensor, _normalize_device
 from . import constants
 
 InputData = Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
 
+from sklearn.covariance import ledoit_wolf
 
 class InductiveConformalPredictor:
     """
@@ -79,15 +78,15 @@ class InductiveConformalPredictor:
 
     Parameters
     ----------
+    measure : str, optional, default='mahalanobis'
+        The distance metric used to score predictions.
+        Supported options: 'mahalanobis' (accounts for correlations) or 'norm' (standard Euclidean).
     predicted_probabilities : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
         The predicted probabilities for the proper training set.
         Shape: (n_samples, c_classes).
     true_labels : Union[torch.Tensor, np.ndarray, list, pd.DataFrame, pd.Series]
         The ground truth binary labels for the proper training set.
         Shape: (n_samples, c_classes).
-    measure : str, optional, default='mahalanobis'
-        The distance metric used to score predictions.
-        Supported options: 'mahalanobis' (accounts for correlations) or 'norm' (standard Euclidean).
     weight_hamming : float, optional, default=0.0
         The weight for the Hamming distance penalty. Higher values penalize predictions
         that are structurally different from observed training labels.
@@ -416,6 +415,10 @@ class InductiveConformalPredictor:
         Computes the generalized covariance matrix for the error vectors
         (|Predicted Probabilities - Labels|) on the Proper Training Set.
 
+        .. note::
+            Covariance matrices are calculated using Ledoit-Wolf shrinkage
+            to ensure positive-definiteness.
+
         If ``measure='mahalanobis'``, this computes the Inverse Covariance Matrix.
         If ``measure='norm'``, this effectively computes an Identity Matrix.
 
@@ -456,7 +459,7 @@ class InductiveConformalPredictor:
 
         errors = torch.abs(probabilities - labels)
         errors_np = errors.cpu().numpy()
-        shrunk_cov_np, _ = ledoit_wolf(errors_np)
+        shrunk_cov_np, optimal_alpha = ledoit_wolf(errors_np)
 
         covariance_matrix = torch.tensor(shrunk_cov_np, dtype=torch.float32, device=self.device)
         eigvalues, eigvectors = torch.linalg.eig(covariance_matrix)
@@ -468,9 +471,9 @@ class InductiveConformalPredictor:
         ).to(device=self.device)
 
         distance_matrix_abs = torch.abs(self._distance_matrix).to(device=self.device)
+
         ones = torch.ones(self.n_classes, device=self.device)
         self._max_distance_score = torch.sqrt(ones @ distance_matrix_abs @ ones).to(device=self.device)
-
         print(f"Distance matrix calculated (Measure: {self._measure}) with shape:", self._distance_matrix.shape)
 
 
