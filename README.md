@@ -162,6 +162,8 @@ prediction_regions_obj = wrapper.predict(X_test)
 ```
 
 The predict method returns a PredictionRegions container holding the conformal prediction regions for each sample.
+By default, the predictor guarantees non-empty prediction sets by always including the label-set with the highest p-value.
+You can switch this behavior using the `non_empty_prediction_regions` boolean parameter (default `True`).
 You can query this object to extract valid label sets at a specific significance level
 (e.g., $\alpha=0.1$ for 90% confidence) or multiple levels (e.g., $\alpha=[0.05, 0.1, 0.2]$).
 
@@ -223,7 +225,7 @@ prediction_sets = wrapper.predict(X_test)(significance_level=0.1)
 
 
 The `evaluate` method provides a convenient way to calculate performance metrics, including Coverage, 
-N-Criterion, S-Criterion, and statistical validity via the KS-test. Additionally, it can return the p-values
+N-Criterion, S-Criterion, Observed Fuzziness and Observed Excess. Additionally, it can return the p-values
 corresponding to the true labels.
 
 The method requires the **ground truth labels** (`true_labelsets`) and the desired **significance level**.
@@ -235,7 +237,8 @@ metrics = prediction_regions_obj.evaluate(
     return_coverage=True,
     return_n_criterion=True,
     return_s_criterion=True,
-    return_ks_test=True,
+    return_observed_fuzziness=True,
+    return_observed_excess=True,
     true_labelsets=y_test,
     significance_level=0.1,
 )
@@ -245,15 +248,12 @@ print(metrics)
 
 ```text
 {
-'coverage': 0.9008264462809917,
- 'n_criterion': 858.8636363636364,
- 's_criterion': 412.99029541015625,
- 'ks_test_metrics': {
-                    'ks_statistic': np.float64(0.05622110017075027),
-                    'ks_p_value': np.float64(0.4135919018220534),
-                    'is_valid': np.True_
-                    }
- }
+    'coverage': 0.9008264541625977,
+    'n_criterion': 957.6694214876034,
+    'observed_excess': 956.7685950413223,
+    's_criterion': 457.9545593261719,
+    'observed_fuzziness': 457.46160888671875
+}
 ```
 
 
@@ -295,10 +295,11 @@ probabilities.
 prediction_regions_obj = icp.predict(test_probs)
 ```
 
-The predict method returns a PredictionRegions container holding the conformal prediction regions. You can extract
-valid label sets at a specific significance level (e.g., $\alpha=0.1$ for 90% confidence) or multiple levels
-(e.g., $\alpha=[0.05, 0.1, 0.2]$). In the example below, we print the prediction regions for the first sample
-in the test set.
+The predict method returns a PredictionRegions container holding the conformal prediction regions for each sample.
+By default, the predictor guarantees non-empty prediction sets by always including the label-set with the highest p-value.
+You can switch this behavior using the `non_empty_prediction_regions` boolean parameter (default `True`).
+You can query this object to extract valid label sets at a specific significance level
+(e.g., $\alpha=0.1$ for 90% confidence) or multiple levels (e.g., $\alpha=[0.05, 0.1, 0.2]$).
 
 ```python
 prediction_sets = prediction_regions_obj(significance_level=0.1)
@@ -327,7 +328,7 @@ tensor([0.0627, 0.0015, 0.0719,  ..., 0.0015, 0.0015, 0.0015])
 ```
 
 Also, it allows us to get the p-values of test set's true labels and evaluate metrics like Coverage, N-Criterion,
-S-Criterion and KS-test.
+S-Criterion, Observed Fuzziness and Observed Excess. 
 
 ```python
 metrics = prediction_regions_obj.evaluate(
@@ -335,8 +336,9 @@ metrics = prediction_regions_obj.evaluate(
     return_coverage=True,
     return_n_criterion=True,
     return_s_criterion=True,
-    return_ks_test=True,
-    true_labelsets=test_labels,
+    return_observed_fuzziness=True,
+    return_observed_excess=True,
+    true_labelsets=y_test,
     significance_level=0.1,
 )
 
@@ -345,15 +347,12 @@ print(metrics)
 
 ```text
 {
-'coverage': 0.9008264462809917,
- 'n_criterion': 858.8636363636364,
- 's_criterion': 412.99029541015625,
- 'ks_test_metrics': {
-                    'ks_statistic': np.float64(0.05622110017075027),
-                    'ks_p_value': np.float64(0.4135919018220534),
-                    'is_valid': np.True_
-                    }
- }
+    'coverage': 0.9008264541625977,
+    'n_criterion': 957.6694214876034,
+    'observed_excess': 956.7685950413223,
+    's_criterion': 457.9545593261719,
+    'observed_fuzziness': 457.46160888671875
+}
 ```
 
 > [!NOTE]  
